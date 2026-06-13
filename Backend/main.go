@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"os/exec"
+    "fmt"
 )
 
 func main() {
@@ -53,6 +55,34 @@ func projectDetailHandler(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func runHelmDeploy(project Project) error {
+	imageParts := strings.Split(project.ImageName, ":")
+
+	repository := imageParts[0]
+	tag := "latest"
+
+	if len(imageParts) > 1 {
+		tag = imageParts[1]
+	}
+
+	cmd := exec.Command(
+		"helm",
+		"upgrade",
+		"--install",
+		project.Name,
+		"../charts/app",
+		"--set", fmt.Sprintf("appName=%s", project.Name),
+		"--set", fmt.Sprintf("image.repository=%s", repository),
+		"--set", fmt.Sprintf("image.tag=%s", tag),
+	)
+
+	output, err := cmd.CombinedOutput()
+	log.Println(string(output))
+
+	return err
+}
+
+
 func getProjectByID(w http.ResponseWriter, id int) {
 	for _, project := range projects {
 		if project.ID == id {
@@ -69,10 +99,22 @@ func getProjectByID(w http.ResponseWriter, id int) {
 func deployProject(w http.ResponseWriter, id int) {
 	for i := range projects {
 		if projects[i].ID == id {
+			projects[i].Status = "deploying"
+
+			err := runHelmDeploy(projects[i])
+			if err != nil {
+				projects[i].Status = "failed"
+				writeJSON(w, http.StatusInternalServerError, map[string]any{
+					"error":   "helm deploy failed",
+					"details": err.Error(),
+				})
+				return
+			}
+
 			projects[i].Status = "running"
 
 			writeJSON(w, http.StatusOK, map[string]any{
-				"message": "deployment simulated",
+				"message": "deployment successful",
 				"project": projects[i],
 			})
 			return
