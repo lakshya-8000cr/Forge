@@ -21,6 +21,36 @@ func main() {
 	http.ListenAndServe(":8080", mux)
 }
 
+
+func deleteProjectDeployment(w http.ResponseWriter, id int) {
+	for i := range projects {
+		if projects[i].ID == id {
+			err := deleteHelmRelease(projects[i].Name)
+			if err != nil {
+				projects[i].Status = "delete_failed"
+				writeJSON(w, http.StatusInternalServerError, map[string]any{
+					"error":   "delete failed",
+					"details": err.Error(),
+				})
+				return
+			}
+
+			projects[i].Status = "deleted"
+
+			writeJSON(w, http.StatusOK, map[string]any{
+				"message": "deployment deleted",
+				"project": projects[i],
+			})
+			return
+		}
+	}
+
+	writeJSON(w, http.StatusNotFound, map[string]string{
+		"error": "project not found",
+	})
+}
+
+
 func projectDetailHandler(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimPrefix(r.URL.Path, "/projects/")
 	parts := strings.Split(strings.Trim(path, "/"), "/")
@@ -50,10 +80,120 @@ func projectDetailHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if len(parts) == 2 && parts[1] == "status" && r.Method == http.MethodGet {
+	getProjectStatus(w, id)
+	return
+    }
+
+	if len(parts) == 2 && parts[1] == "delete" && r.Method == http.MethodDelete {
+	deleteProjectDeployment(w, id)
+	return
+    }
+
+	if len(parts) == 2 && parts[1] == "logs" && r.Method == http.MethodGet {
+	getProjectLogs(w, id)
+	return
+    }
+	
 	writeJSON(w, http.StatusNotFound, map[string]string{
 		"error": "route not found",
 	})
 }
+
+func getProjectStatus(w http.ResponseWriter, id int) {
+	for _, project := range projects {
+		if project.ID == id {
+			status, err := getKubernetesStatus(project.Name)
+			if err != nil {
+				writeJSON(w, http.StatusInternalServerError, map[string]any{
+					"error":   "failed to get kubernetes status",
+					"details": err.Error(),
+				})
+				return
+			}
+
+			writeJSON(w, http.StatusOK, map[string]string{
+				"project": project.Name,
+				"status":  status,
+			})
+			return
+		}
+	}
+
+	writeJSON(w, http.StatusNotFound, map[string]string{
+		"error": "project not found",
+	})
+}
+
+
+func getProjectLogs(w http.ResponseWriter, id int) {
+	for _, project := range projects {
+		if project.ID == id {
+			logs, err := getKubernetesLogs(project.Name)
+			if err != nil {
+				writeJSON(w, http.StatusInternalServerError, map[string]any{
+					"error":   "failed to get logs",
+					"details": err.Error(),
+				})
+				return
+			}
+
+			writeJSON(w, http.StatusOK, map[string]string{
+				"project": project.Name,
+				"logs":    logs,
+			})
+			return
+		}
+	}
+
+	writeJSON(w, http.StatusNotFound, map[string]string{
+		"error": "project not found",
+	})
+}
+
+
+func getKubernetesLogs(appName string) (string, error) {
+	cmd := exec.Command(
+		"kubectl",
+		"logs",
+		"-l",
+		fmt.Sprintf("app=%s", appName),
+		"--tail=100",
+	)
+
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("%s", string(output))
+	}
+
+	return string(output), nil
+}
+
+
+func getKubernetesStatus(appName string) (string, error) {
+	cmd := exec.Command(
+		"kubectl",
+		"get",
+		"pods",
+		"-l",
+		fmt.Sprintf("app=%s", appName),
+		"-o",
+		"jsonpath={.items[0].status.phase}",
+	)
+
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("%s", string(output))
+	}
+
+	status := strings.TrimSpace(string(output))
+	if status == "" {
+		return "NotFound", nil
+	}
+
+	return status, nil
+}
+
 
 func runHelmDeploy(project Project) error {
 	imageParts := strings.Split(project.ImageName, ":")
@@ -74,6 +214,20 @@ func runHelmDeploy(project Project) error {
 		"--set", fmt.Sprintf("appName=%s", project.Name),
 		"--set", fmt.Sprintf("image.repository=%s", repository),
 		"--set", fmt.Sprintf("image.tag=%s", tag),
+	)
+
+	output, err := cmd.CombinedOutput()
+	log.Println(string(output))
+
+	return err
+}
+
+
+func deleteHelmRelease(appName string) error {
+	cmd := exec.Command(
+		"helm",
+		"uninstall",
+		appName,
 	)
 
 	output, err := cmd.CombinedOutput()
