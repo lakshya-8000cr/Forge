@@ -15,6 +15,14 @@ _ "github.com/lib/pq"
 
 var db *sql.DB
 
+type Deployment struct {
+	ID        int    `json:"id"`
+	ProjectID int    `json:"project_id"`
+	ImageName string `json:"image_name"`
+	Status    string `json:"status"`
+	CreatedAt string `json:"created_at"`
+}
+
 func connectDB() {
 	connStr := "postgres://forge:forge123@localhost:5432/forge?sslmode=disable"
 
@@ -33,7 +41,7 @@ func connectDB() {
 }
 
 func createTables() {
-	query := `
+	projectsQuery := `
 	CREATE TABLE IF NOT EXISTS projects (
 		id SERIAL PRIMARY KEY,
 		name TEXT NOT NULL,
@@ -43,12 +51,28 @@ func createTables() {
 	);
 	`
 
-	_, err := db.Exec(query)
+	_, err := db.Exec(projectsQuery)
 	if err != nil {
-		log.Fatal("table creation error:", err)
+		log.Fatal("projects table creation error:", err)
+	}
+
+	deploymentsQuery := `
+	CREATE TABLE IF NOT EXISTS deployments (
+		id SERIAL PRIMARY KEY,
+		project_id INT NOT NULL,
+		image_name TEXT NOT NULL,
+		status TEXT NOT NULL,
+		created_at TIMESTAMP DEFAULT NOW()
+	);
+	`
+
+	_, err = db.Exec(deploymentsQuery)
+	if err != nil {
+		log.Fatal("deployments table creation error:", err)
 	}
 
 	log.Println("Projects table ready")
+	log.Println("Deployments table ready")
 }
 
 func main() {
@@ -154,59 +178,204 @@ func projectDetailHandler(w http.ResponseWriter, r *http.Request) {
 	return
     }
 	
+
+    if len(parts) == 2 && parts[1] == "deployments" && r.Method == http.MethodGet {
+	getDeployments(w, id)
+	return
+    }
+
+
+if len(parts) == 2 && parts[1] == "url" && r.Method == http.MethodGet {
+	getProjectURL(w, id)
+	return
+}
+
+
 	writeJSON(w, http.StatusNotFound, map[string]string{
 		"error": "route not found",
 	})
+
+
 }
 
-func getProjectStatus(w http.ResponseWriter, id int) {
-	for _, project := range projects {
-		if project.ID == id {
-			status, err := getKubernetesStatus(project.Name)
-			if err != nil {
-				writeJSON(w, http.StatusInternalServerError, map[string]any{
-					"error":   "failed to get kubernetes status",
-					"details": err.Error(),
-				})
-				return
-			}
+func getProjectURL(w http.ResponseWriter, id int) {
+	var project Project
 
-			writeJSON(w, http.StatusOK, map[string]string{
-				"project": project.Name,
-				"status":  status,
-			})
-			return
-		}
+	err := db.QueryRow(
+		`SELECT id, name, image_name, status
+		 FROM projects
+		 WHERE id = $1`,
+		id,
+	).Scan(
+		&project.ID,
+		&project.Name,
+		&project.ImageName,
+		&project.Status,
+	)
+
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{
+			"error": "project not found",
+		})
+		return
 	}
 
-	writeJSON(w, http.StatusNotFound, map[string]string{
-		"error": "project not found",
+	writeJSON(w, http.StatusOK, map[string]string{
+		"service_name": project.Name,
+		"command":      "minikube service " + project.Name,
+		"note":         "Run this command in a terminal. Minikube will open the app URL in your browser.",
+	})
+}
+
+func getMinikubeServiceURL(serviceName string) (string, error) {
+	ipCmd := exec.Command("minikube", "ip")
+	ipOutput, err := ipCmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf(string(ipOutput))
+	}
+
+	nodePortCmd := exec.Command(
+		"kubectl",
+		"get",
+		"svc",
+		serviceName,
+		"-o",
+		"jsonpath={.spec.ports[0].nodePort}",
+	)
+
+	portOutput, err := nodePortCmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf(string(portOutput))
+	}
+
+	ip := strings.TrimSpace(string(ipOutput))
+	port := strings.TrimSpace(string(portOutput))
+
+	if ip == "" || port == "" {
+		return "", fmt.Errorf("minikube ip or nodePort not found")
+	}
+
+	return fmt.Sprintf("http://%s:%s", ip, port), nil
+}
+
+func getDeployments(w http.ResponseWriter, id int) {
+
+	rows, err := db.Query(
+		`SELECT id, project_id, image_name, status, created_at
+		 FROM deployments
+		 WHERE project_id = $1
+		 ORDER BY created_at DESC`,
+		id,
+	)
+
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	defer rows.Close()
+
+	deployments := []Deployment{}
+
+	for rows.Next() {
+
+		var d Deployment
+
+		err := rows.Scan(
+			&d.ID,
+			&d.ProjectID,
+			&d.ImageName,
+			&d.Status,
+			&d.CreatedAt,
+		)
+
+		if err != nil {
+			continue
+		}
+
+		deployments = append(deployments, d)
+	}
+
+	writeJSON(w, http.StatusOK, deployments)
+}
+
+
+func getProjectStatus(w http.ResponseWriter, id int) {
+
+	var project Project
+
+	err := db.QueryRow(
+		`SELECT id, name, image_name, status
+		 FROM projects
+		 WHERE id = $1`,
+		id,
+	).Scan(
+		&project.ID,
+		&project.Name,
+		&project.ImageName,
+		&project.Status,
+	)
+
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{
+			"error": "project not found",
+		})
+		return
+	}
+
+	status, err := getKubernetesStatus(project.Name)
+
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{
+			"error":   "failed to get kubernetes status",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{
+		"project": project.Name,
+		"status":  status,
 	})
 }
 
 
 func getProjectLogs(w http.ResponseWriter, id int) {
-	for _, project := range projects {
-		if project.ID == id {
-			logs, err := getKubernetesLogs(project.Name)
-			if err != nil {
-				writeJSON(w, http.StatusInternalServerError, map[string]any{
-					"error":   "failed to get logs",
-					"details": err.Error(),
-				})
-				return
-			}
+	var project Project
 
-			writeJSON(w, http.StatusOK, map[string]string{
-				"project": project.Name,
-				"logs":    logs,
-			})
-			return
-		}
+	err := db.QueryRow(
+		`SELECT id, name, image_name, status
+		 FROM projects
+		 WHERE id = $1`,
+		id,
+	).Scan(
+		&project.ID,
+		&project.Name,
+		&project.ImageName,
+		&project.Status,
+	)
+
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{
+			"error": "project not found",
+		})
+		return
 	}
 
-	writeJSON(w, http.StatusNotFound, map[string]string{
-		"error": "project not found",
+	logs, err := getKubernetesLogs(project.Name)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{
+			"error":   "failed to get logs",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{
+		"project": project.Name,
+		"logs":    logs,
 	})
 }
 
@@ -273,6 +442,7 @@ func runHelmDeploy(project Project) error {
 		"--set", fmt.Sprintf("appName=%s", project.Name),
 		"--set", fmt.Sprintf("image.repository=%s", repository),
 		"--set", fmt.Sprintf("image.tag=%s", tag),
+		"--set", "service.type=NodePort",
 	)
 
 	output, err := cmd.CombinedOutput()
@@ -297,47 +467,96 @@ func deleteHelmRelease(appName string) error {
 
 
 func getProjectByID(w http.ResponseWriter, id int) {
-	for _, project := range projects {
-		if project.ID == id {
-			writeJSON(w, http.StatusOK, project)
-			return
-		}
+	var project Project
+
+	err := db.QueryRow(
+		`SELECT id, name, image_name, status FROM projects WHERE id = $1`,
+		id,
+	).Scan(&project.ID, &project.Name, &project.ImageName, &project.Status)
+
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{
+			"error": "project not found",
+		})
+		return
 	}
 
-	writeJSON(w, http.StatusNotFound, map[string]string{
-		"error": "project not found",
-	})
+	writeJSON(w, http.StatusOK, project)
 }
 
 func deployProject(w http.ResponseWriter, id int) {
-	for i := range projects {
-		if projects[i].ID == id {
-			projects[i].Status = "deploying"
+	var project Project
 
-			err := runHelmDeploy(projects[i])
-			if err != nil {
-				projects[i].Status = "failed"
-				writeJSON(w, http.StatusInternalServerError, map[string]any{
-					"error":   "helm deploy failed",
-					"details": err.Error(),
-				})
-				return
-			}
+	err := db.QueryRow(
+		`SELECT id, name, image_name, status FROM projects WHERE id = $1`,
+		id,
+	).Scan(&project.ID, &project.Name, &project.ImageName, &project.Status)
 
-			projects[i].Status = "running"
-
-			writeJSON(w, http.StatusOK, map[string]any{
-				"message": "deployment successful",
-				"project": projects[i],
-			})
-			return
-		}
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{
+			"error": "project not found",
+		})
+		return
 	}
 
-	writeJSON(w, http.StatusNotFound, map[string]string{
-		"error": "project not found",
+	_, err = db.Exec(`UPDATE projects SET status = 'deploying' WHERE id = $1`, id)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	err = runHelmDeploy(project)
+
+	if err != nil {
+		db.Exec(`UPDATE projects SET status = 'failed' WHERE id = $1`, id)
+
+		db.Exec(
+			`INSERT INTO deployments (project_id, image_name, status)
+			 VALUES ($1, $2, $3)`,
+			project.ID,
+			project.ImageName,
+			"failed",
+		)
+
+		writeJSON(w, http.StatusInternalServerError, map[string]any{
+			"error":   "helm deploy failed",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	_, err = db.Exec(`UPDATE projects SET status = 'running' WHERE id = $1`, id)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	_, err = db.Exec(
+		`INSERT INTO deployments (project_id, image_name, status)
+		 VALUES ($1, $2, $3)`,
+		project.ID,
+		project.ImageName,
+		"success",
+	)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	project.Status = "running"
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"message": "deployment successful",
+		"project": project,
 	})
 }
+
 
 func writeJSON(w http.ResponseWriter, code int, data any) {
 	w.Header().Set("Content-Type", "application/json")

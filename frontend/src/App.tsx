@@ -10,6 +10,14 @@ interface Project {
   status: string;
 }
 
+interface Deployment {
+  id: number;
+  project_id: number;
+  image_name: string;
+  status: string;
+  created_at: string;
+}
+
 interface LogLine {
   ts: string;
   text: string;
@@ -94,6 +102,7 @@ function StatusBadge({ status }: { status: string }) {
 
 export default function App() {
   const [projects, setProjects] = useState<Project[]>([]);
+  const [deployments, setDeployments] = useState<Deployment[]>([]);
   const [name, setName] = useState("");
   const [image, setImage] = useState("");
   const [logs, setLogs] = useState<LogLine[]>([]);
@@ -126,7 +135,6 @@ export default function App() {
       const data = await res.json();
       setProjects(data);
     } catch {
-      // dev: no backend, use demo data
       setProjects([
         { id: 1, name: "api-server", image_name: "node:18-alpine", status: "running" },
         { id: 2, name: "frontend-app", image_name: "nginx:latest", status: "running" },
@@ -192,6 +200,13 @@ export default function App() {
     }
   }
 
+  
+async function launchProject(id: number) {
+  const res = await fetch(`${API}/projects/${id}/url`);
+  const data = await res.json();
+
+  alert(`${data.note}\n\n${data.command}`);
+}
   async function getLogs(id: number) {
     const p = projects.find((x) => x.id === id);
     if (!p) return;
@@ -224,6 +239,32 @@ export default function App() {
       { ts: now(), text: "container stopped", type: "sys" },
       { ts: now(), text: "resources freed", type: "dim" },
     ], "system");
+  }
+
+  async function getDeployments(id: number) {
+    try {
+      const res = await fetch(`${API}/projects/${id}/deployments`);
+      const data = await res.json();
+      setDeployments(data);
+    } catch {
+      // dev fallback: mock deployment history
+      setDeployments([
+        {
+          id: 1,
+          project_id: id,
+          image_name: projects.find((p) => p.id === id)?.image_name ?? "unknown",
+          status: "running",
+          created_at: new Date(Date.now() - 1000 * 60 * 30).toISOString(),
+        },
+        {
+          id: 2,
+          project_id: id,
+          image_name: projects.find((p) => p.id === id)?.image_name ?? "unknown",
+          status: "stopped",
+          created_at: new Date(Date.now() - 1000 * 60 * 90).toISOString(),
+        },
+      ]);
+    }
   }
 
   const running = projects.filter((p) => p.status === "running").length;
@@ -306,9 +347,7 @@ export default function App() {
             </button>
           </div>
           {projects.length === 0 ? (
-            <div className="empty-state">
-              No Active running project
-            </div>
+            <div className="empty-state">No Active running project</div>
           ) : (
             <table>
               <thead>
@@ -317,7 +356,7 @@ export default function App() {
                   <th>Name</th>
                   <th>Docker-Image</th>
                   <th>Status</th>
-                  <th>Logs</th>
+                  <th>Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -337,11 +376,20 @@ export default function App() {
                         >
                           ▶ deploy
                         </button>
+                        <button className="act-btn" onClick={() => launchProject(p.id)}>
+                        Live
+                        </button>
                         <button
                           className="act-btn"
                           onClick={() => getLogs(p.id)}
                         >
                           ≡ logs
+                        </button>
+                        <button
+                          className="act-btn"
+                          onClick={() => getDeployments(p.id)}
+                        >
+                          ⏱ history
                         </button>
                         <button
                           className="act-btn danger"
@@ -357,6 +405,45 @@ export default function App() {
             </table>
           )}
         </div>
+
+        {/* Deployment History */}
+        {deployments.length > 0 && (
+          <div className="panel" style={{ marginTop: 16 }}>
+            <div className="panel-head">
+              <div className="panel-title">
+                <span className="panel-dot" />
+                Deployment History
+              </div>
+              <button className="panel-action" onClick={() => setDeployments([])}>
+                ✕ clear
+              </button>
+            </div>
+            <table>
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Project ID</th>
+                  <th>Image</th>
+                  <th>Status</th>
+                  <th>Created At</th>
+                </tr>
+              </thead>
+              <tbody>
+                {deployments.map((d) => (
+                  <tr key={d.id}>
+                    <td>#{d.id}</td>
+                    <td>#{d.project_id}</td>
+                    <td className="td-image">{d.image_name}</td>
+                    <td>
+                      <StatusBadge status={d.status} />
+                    </td>
+                    <td>{new Date(d.created_at).toLocaleString()}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
 
         {/* Telemetry */}
         <div className="telemetry">
