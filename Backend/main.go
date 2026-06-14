@@ -8,9 +8,52 @@ import (
 	"strings"
 	"os/exec"
     "fmt"
+    "database/sql"
+
+_ "github.com/lib/pq"
 )
 
+var db *sql.DB
+
+func connectDB() {
+	connStr := "postgres://forge:forge123@localhost:5432/forge?sslmode=disable"
+
+	var err error
+	db, err = sql.Open("postgres", connStr)
+	if err != nil {
+		log.Fatal("DB open error:", err)
+	}
+
+	err = db.Ping()
+	if err != nil {
+		log.Fatal("DB ping error:", err)
+	}
+
+	log.Println("Connected to PostgreSQL")
+}
+
+func createTables() {
+	query := `
+	CREATE TABLE IF NOT EXISTS projects (
+		id SERIAL PRIMARY KEY,
+		name TEXT NOT NULL,
+		image_name TEXT NOT NULL,
+		status TEXT NOT NULL DEFAULT 'pending',
+		created_at TIMESTAMP DEFAULT NOW()
+	);
+	`
+
+	_, err := db.Exec(query)
+	if err != nil {
+		log.Fatal("table creation error:", err)
+	}
+
+	log.Println("Projects table ready")
+}
+
 func main() {
+	connectDB()
+    createTables()
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/health", healthHandler)
@@ -18,7 +61,23 @@ func main() {
 	mux.HandleFunc("/projects/", projectDetailHandler)
 
 	log.Println("Forge backend running on :8080")
-	http.ListenAndServe(":8080", mux)
+	http.ListenAndServe(":8080", cors(mux))
+	
+}
+
+func cors(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
 }
 
 
@@ -288,9 +347,31 @@ func writeJSON(w http.ResponseWriter, code int, data any) {
 
 
 func projectsHandler(w http.ResponseWriter, r *http.Request) {
-	log.Println("method:", r.Method)
 	if r.Method == http.MethodGet {
-		writeJSON(w, http.StatusOK, projects)
+		rows, err := db.Query(`SELECT id, name, image_name, status FROM projects ORDER BY id DESC`)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{
+				"error": err.Error(),
+			})
+			return
+		}
+		defer rows.Close()
+
+		list := []Project{}
+
+		for rows.Next() {
+			var p Project
+			err := rows.Scan(&p.ID, &p.Name, &p.ImageName, &p.Status)
+			if err != nil {
+				writeJSON(w, http.StatusInternalServerError, map[string]string{
+					"error": err.Error(),
+				})
+				return
+			}
+			list = append(list, p)
+		}
+
+		writeJSON(w, http.StatusOK, list)
 		return
 	}
 
@@ -318,15 +399,22 @@ func createProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	project := Project{
-		ID:        nextID,
-		Name:      req.Name,
-		ImageName: req.ImageName,
-		Status:    "pending",
-	}
+	var project Project
 
-	nextID++
-	projects = append(projects, project)
+	err = db.QueryRow(
+		`INSERT INTO projects (name, image_name, status)
+		 VALUES ($1, $2, 'pending')
+		 RETURNING id, name, image_name, status`,
+		req.Name,
+		req.ImageName,
+	).Scan(&project.ID, &project.Name, &project.ImageName, &project.Status)
+
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{
+			"error": err.Error(),
+		})
+		return
+	}
 
 	writeJSON(w, http.StatusCreated, project)
 }
