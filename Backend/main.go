@@ -529,6 +529,26 @@ func deployProject(w http.ResponseWriter, id int) {
 		return
 	}
 
+	err = validateImage(project.ImageName)
+     
+	if err != nil {
+	db.Exec(`UPDATE projects SET status = 'failed' WHERE id = $1`, id)
+
+	db.Exec(
+		`INSERT INTO deployments (project_id, image_name, status)
+		 VALUES ($1, $2, $3)`,
+		project.ID,
+		project.ImageName,
+		"failed",
+	)
+
+	writeJSON(w, http.StatusBadRequest, map[string]any{
+		"error":   "image validation failed",
+		"details": err.Error(),
+	})
+	return
+    }
+
 	err = runHelmDeploy(project)
 
 	if err != nil {
@@ -577,6 +597,18 @@ func deployProject(w http.ResponseWriter, id int) {
 		"message": "deployment successful",
 		"project": project,
 	})
+}
+
+
+func validateImage(imageName string) error {
+	cmd := exec.Command("docker", "manifest", "inspect", imageName)
+
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("invalid or inaccessible image: %s", strings.TrimSpace(string(output)))
+	}
+
+	return nil
 }
 
 
