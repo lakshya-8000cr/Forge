@@ -9,6 +9,7 @@ import (
 	"os/exec"
     "fmt"
     "database/sql"
+	"os"
 
 _ "github.com/lib/pq"
 )
@@ -23,8 +24,29 @@ type Deployment struct {
 	CreatedAt string `json:"created_at"`
 }
 
+func getEnv(key string, fallback string) string {
+	value := os.Getenv(key)
+	if value == "" {
+		return fallback
+	}
+	return value
+}
+
 func connectDB() {
-	connStr := "postgres://forge:forge123@localhost:5432/forge?sslmode=disable"
+	host := getEnv("POSTGRES_HOST", "localhost")
+	port := getEnv("POSTGRES_PORT", "5432")
+	user := getEnv("POSTGRES_USER", "forge")
+	password := getEnv("POSTGRES_PASSWORD", "forge123")
+	dbname := getEnv("POSTGRES_DB", "forge")
+
+	connStr := fmt.Sprintf(
+		"postgres://%s:%s@%s:%s/%s?sslmode=disable",
+		user,
+		password,
+		host,
+		port,
+		dbname,
+	)
 
 	var err error
 	db, err = sql.Open("postgres", connStr)
