@@ -545,3 +545,39 @@ tr:hover td { background: rgba(0,212,255,0.03); }
   font-size: 12px;
   letter-spacing: 0.06em;
 }
+
+
+/* ── Toast Notification ── */
+.toast-msg {
+  position: fixed;
+  bottom: 2rem;
+  right: 2rem;
+  z-index: 100;
+  padding: 12px 20px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-family: var(--font-mono);
+  letter-spacing: 0.04em;
+  backdrop-filter: blur(10px);
+  animation: toast-in 0.2s ease;
+  max-width: 360px;
+}
+
+.toast-ok {
+  background: rgba(57, 255, 126, 0.08);
+  border: 0.5px solid rgba(57, 255, 126, 0.3);
+  color: var(--green);
+  box-shadow: 0 0 20px rgba(57, 255, 126, 0.1);
+}
+
+.toast-err {
+  background: rgba(255, 77, 77, 0.08);
+  border: 0.5px solid rgba(255, 77, 77, 0.3);
+  color: var(--red);
+  box-shadow: 0 0 20px rgba(255, 77, 77, 0.1);
+}
+
+@keyframes toast-in {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}

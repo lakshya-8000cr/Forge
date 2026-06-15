@@ -49,6 +49,7 @@ const LOG_DATA: Record<string, (p: Project) => LogLine[]> = {
   ],
 };
 
+
 function now() {
   return new Date().toISOString().substr(11, 8);
 }
@@ -109,6 +110,7 @@ export default function App() {
   const [logsSource, setLogsSource] = useState("system");
   const [clock, setClock] = useState("");
   const teleRef = useRef<HTMLDivElement>(null);
+  const [message, setMessage] = useState("");
 
   useEffect(() => {
     loadProjects();
@@ -172,33 +174,24 @@ export default function App() {
     setImage("");
   }
 
-  async function deployProject(id: number) {
-    const p = projects.find((x) => x.id === id);
-    if (!p) return;
+async function deployProject(id: number) {
+  setMessage("Deploying...");
 
-    setProjects((prev) =>
-      prev.map((x) => (x.id === id ? { ...x, status: "building" } : x))
-    );
-    addLog([
-      { ts: now(), text: `initiating launch: ${p.name}`, type: "sys" },
-      { ts: now(), text: `pulling ${p.image_name}`, type: "sys" },
-      { ts: now(), text: "building layers...", type: "sys" },
-      { ts: now(), text: "container starting", type: "sys" },
-      { ts: now(), text: "health probe ok", type: "ok" },
-      { ts: now(), text: "orbit achieved ✓", type: "ok" },
-    ], p.name);
+  const res = await fetch(`${API}/projects/${id}/deploy`, {
+    method: "POST",
+  });
 
-    try {
-      await fetch(`${API}/projects/${id}/deploy`, { method: "POST" });
-      await loadProjects();
-    } catch {
-      setTimeout(() => {
-        setProjects((prev) =>
-          prev.map((x) => (x.id === id ? { ...x, status: "running" } : x))
-        );
-      }, 2000);
-    }
+  const data = await res.json();
+
+  if (!res.ok) {
+    setMessage(`❌ ${data.error}: ${data.details}`);
+    await loadProjects();
+    return;
   }
+
+  setMessage(`✅ ${data.message}`);
+  await loadProjects();
+}
 
   
 async function launchProject(id: number) {
@@ -444,6 +437,12 @@ async function launchProject(id: number) {
             </table>
           </div>
         )}
+
+                {message && (
+  <div className={`toast-msg ${message.startsWith("✅") ? "toast-ok" : "toast-err"}`}>
+    {message}
+  </div>
+)}
 
         {/* Telemetry */}
         <div className="telemetry">

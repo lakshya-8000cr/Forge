@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+
+metadata:
+  name: forge-backend
+
+spec:
+  type: {{ .Values.service.type }}
+
+  selector:
+    app: forge-backend
+
+  ports:
+    - port: {{ .Values.backend.port }}
+      targetPort: {{ .Values.backend.port }}

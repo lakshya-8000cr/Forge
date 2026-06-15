@@ -1,0 +1,17 @@
+frontend:
+  image: forge-frontend:latest
+  port: 5173
+
+backend:
+  image: forge-backend:latest
+  port: 8080
+
+postgres:
+  image: postgres:16
+  user: forge
+  password: forge123
+  database: forge
+  port: 5432
+
+service:
+  type: NodePort
