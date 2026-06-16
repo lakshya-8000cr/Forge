@@ -1,0 +1,34 @@
+# ==========================================
+# Terraform Standard GitIgnore Items
+# ==========================================
+
+# Local provider plugins aur files (.init karne par jo download hota hai)
+.terraform/
+
+# System specific files (Windows thumbnail cache vagera)
+.DS_Store
+Thumbs.db
+
+# Lock file jo providers ke hashes track karti hai 
+# (Optional: Kuch teams ise commit karti hain, par local testing ke liye ignore karna better hai)
+.terraform.lock.hcl
+
+# Local state files (Kyunki tumne S3 backend setup kar liya hai, local state ki zaroorat nahi hai)
+*.tfstate
+*.tfstate.backup
+*.tfstate.lock.info
+
+# Crash logs (Agar kabhi Terraform crash ho jaye toh generate hone wali files)
+crash.log
+crash.*.log
+
+# Terraform Variables files (Jisme tum galti se password ya secret keys daal sakte ho)
+*.tfvars
+*.tfvars.json
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# Environment Variables files
+.env
