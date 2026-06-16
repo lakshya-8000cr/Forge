@@ -4,6 +4,12 @@ kind: Deployment
 metadata:
   name: forge-postgres
 
+  labels:
+
+  managed-by: forge
+
+  app: {{ .Values.appName }}
+
 spec:
   replicas: 1
 

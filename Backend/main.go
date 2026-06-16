@@ -461,6 +461,9 @@ func runHelmDeploy(project Project) error {
 		"--install",
 		project.Name,
 		"../charts/app",
+		"--namespace",
+		"forge-apps",
+		"--create-namespace",
 		"--set", fmt.Sprintf("appName=%s", project.Name),
 		"--set", fmt.Sprintf("image.repository=%s", repository),
 		"--set", fmt.Sprintf("image.tag=%s", tag),
@@ -549,6 +552,23 @@ func deployProject(w http.ResponseWriter, id int) {
 	return
     }
 
+	err = ensureForgeNamespace()
+
+   if err != nil {
+
+	writeJSON(
+		w,
+		http.StatusInternalServerError,
+
+		map[string]string{
+
+			"error": "failed to create forge namespace",
+		},
+	)
+
+	return
+   }
+
 	err = runHelmDeploy(project)
 
 	if err != nil {
@@ -597,6 +617,32 @@ func deployProject(w http.ResponseWriter, id int) {
 		"message": "deployment successful",
 		"project": project,
 	})
+}
+
+
+func ensureForgeNamespace() error {
+
+	cmd := exec.Command(
+		"kubectl",
+		"create",
+		"namespace",
+		"forge-apps",
+	)
+
+	err := cmd.Run()
+
+	if err == nil {
+		return nil
+	}
+
+	cmd = exec.Command(
+		"kubectl",
+		"get",
+		"namespace",
+		"forge-apps",
+	)
+
+	return cmd.Run()
 }
 
 

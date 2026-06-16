@@ -3,6 +3,9 @@ kind: Service
 
 metadata:
   name: {{ .Values.appName }}
+  labels:
+    managed-by: forge
+    app: {{ .Values.appName }}
 
 spec:
   type: {{ .Values.service.type }}
@@ -11,5 +14,5 @@ spec:
     app: {{ .Values.appName }}
 
   ports:
-  - port: {{ .Values.service.port }}
-    targetPort: {{ .Values.containerPort }}
+    - port: {{ .Values.service.port }}
+      targetPort: {{ .Values.containerPort }}

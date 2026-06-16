@@ -17,6 +17,9 @@ spec:
         app: forge-backend
 
     spec:
+
+      serviceAccountName: forge-backend-sa
+
       containers:
         - name: backend
           image: {{ .Values.backend.image }}

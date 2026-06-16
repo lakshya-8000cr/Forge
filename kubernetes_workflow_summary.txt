@@ -1,0 +1,72 @@
+================================================================================
+KUBERNETES (K8s) ARCHITECTURE & DEPLOYMENT JOURNEY
+================================================================================
+Target: A high-level overview of components and the precise step-by-step 
+journey of a request from 'kubectl apply -f dep.yml' to a running Pod.
+
+--------------------------------------------------------------------------------
+1. THE CORE COMPONENTS (Who's Who?)
+--------------------------------------------------------------------------------
+A. CONTROL PLANE (Master Node - The Brain)
+   * API Server: The front door. Every communication, internal or external, 
+     goes through it. Validates and processes REST requests.
+   * etcd: The source of truth. A highly available key-value store holding the
+     complete, current state of the entire cluster.
+   * Controller Manager: The managers. Runs watch loops to bring the actual 
+     state of the cluster in line with the desired state (e.g., ReplicaSet, Node).
+   * Scheduler: The matchmaker. Watches for unassigned Pods and selects the
+     best worker node based on resource constraints, affinity, policies, etc.
+
+B. WORKER NODES (The Muscle)
+   * Kubelet: The captain on the ship. An agent running on each node ensuring 
+     that containers described in PodSpecs are running and healthy.
+   * Kube-Proxy: The network guard. Maintains network rules on nodes to allow 
+     network communication to your Pods from inside or outside the cluster.
+   * Container Runtime (CRI): The engine. Software responsible for running 
+     containers (e.g., containerd, Docker).
+
+--------------------------------------------------------------------------------
+2. THE JOURNEY: kubectl apply -f dep.yml (Step-by-Step Flow)
+--------------------------------------------------------------------------------
+
+[ PHASE 1: CLIENT-SIDE ]
+[User] -> (kubectl) 
+  |
+  +-- Step 1: 'kubectl' parses and validates the YAML file locally.
+  +-- Step 2: Extracts cluster details/auth tokens from '~/.kube/config'.
+  +-- Step 3: Sends a POST request containing the manifest to the API Server.
+
+[ PHASE 2: CONTROL PLANE HANDSHAKE ]
+(API Server) -> (etcd)
+  |
+  +-- Step 4: API Server authenticates (Who you are) & authorizes (RBAC permissions).
+  +-- Step 5: Admission Controllers mutate/validate the spec (injecting defaults).
+  +-- Step 6: API Server writes the Deployment object into 'etcd'. (First Save)
+
+[ PHASE 3: ORCHESTRATION & SCHEDULING ]
+(Controllers) -> (Scheduler)
+  |
+  +-- Step 7: Deployment Controller detects the new object via watch loop.
+  |           It instructs the API Server to create a ReplicaSet.
+  +-- Step 8: ReplicaSet Controller triggers and requests creation of N individual Pods.
+  |           These Pods are currently saved in etcd with Status = Pending.
+  +-- Step 9: Scheduler notices Unscheduled Pods. It runs:
+              - Filtering (Predicates): Checks which nodes have enough CPU/RAM.
+              - Scoring (Priorities): Ranks candidate nodes for optimal placement.
+              - Binding: Tells API Server its decision. API Server updates 'etcd'.
+
+[ PHASE 4: WORKER NODE EXECUTION ]
+(Kubelet) -> (Container Runtime / CNI) -> [Running Pod]
+  |
+  +-- Step 10: Kubelet on the assigned Node catches the update via watch loop.
+  +-- Step 11: Kubelet commands Container Runtime (CRI) to pull image & start containers.
+  +-- Step 12: Network Plugin (CNI) assigns a unique cluster IP to the Pod.
+  +-- Step 13: Kubelet reports back "Running" status to API Server.
+  +-- Step 14: API Server updates state in 'etcd'.
+
+--------------------------------------------------------------------------------
+3. THE END STATE SUMMARY
+--------------------------------------------------------------------------------
+User terminal displays: 'deployment.apps/my-dep created'
+Behind the scenes, your application is live, networked, monitored, and self-healing.
+================================================================================

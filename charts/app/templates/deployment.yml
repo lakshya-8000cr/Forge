@@ -3,6 +3,9 @@ kind: Deployment
 
 metadata:
   name: {{ .Values.appName }}
+  labels:
+    managed-by: forge
+    app: {{ .Values.appName }}
 
 spec:
   replicas: 1
@@ -14,13 +17,14 @@ spec:
   template:
     metadata:
       labels:
+        managed-by: forge
         app: {{ .Values.appName }}
 
     spec:
       containers:
-      - name: {{ .Values.appName }}
-        image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
-        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        - name: {{ .Values.appName }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
 
-        ports:
-        - containerPort: {{ .Values.containerPort }}
+          ports:
+            - containerPort: {{ .Values.containerPort }}
