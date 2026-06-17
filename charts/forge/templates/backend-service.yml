@@ -5,7 +5,7 @@ metadata:
   name: forge-backend
 
 spec:
-  type: {{ .Values.service.type }}
+  type: ClusterIP
 
   selector:
     app: forge-backend

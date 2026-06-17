@@ -24,6 +24,8 @@ interface LogLine {
   type: "sys" | "ok" | "err" | "warn" | "net" | "dim";
 }
 
+type View = "overview" | "detail";
+
 const LOG_DATA: Record<string, (p: Project) => LogLine[]> = {
   running: (p) => [
     { ts: now(), text: `${p.name} nominal — all systems go`, type: "ok" },
@@ -49,49 +51,16 @@ const LOG_DATA: Record<string, (p: Project) => LogLine[]> = {
   ],
 };
 
-
 function now() {
   return new Date().toISOString().substr(11, 8);
 }
 
-function Stars() {
-  const stars = Array.from({ length: 80 }, (_, i) => ({
-    id: i,
-    x: Math.random() * 100,
-    y: Math.random() * 100,
-    size: Math.random() * 1.8 + 0.4,
-    dur: (Math.random() * 4 + 2).toFixed(1),
-    delay: (Math.random() * 5).toFixed(1),
-    op: (Math.random() * 0.5 + 0.2).toFixed(2),
-  }));
-
-  return (
-    <div className="starfield">
-      {stars.map((s) => (
-        <div
-          key={s.id}
-          className="star"
-          style={{
-            left: `${s.x}%`,
-            top: `${s.y}%`,
-            width: s.size,
-            height: s.size,
-            ["--dur" as any]: `${s.dur}s`,
-            ["--delay" as any]: `${s.delay}s`,
-            ["--max-op" as any]: s.op,
-          }}
-        />
-      ))}
-    </div>
-  );
-}
-
 function StatusBadge({ status }: { status: string }) {
   const labels: Record<string, string> = {
-    running: "live",
-    error: "error",
-    stopped: "offline",
-    building: "launching",
+    running: "Running",
+    error: "Failed",
+    stopped: "Stopped",
+    building: "Deploying",
   };
   return (
     <span className={`badge ${status}`}>
@@ -102,23 +71,29 @@ function StatusBadge({ status }: { status: string }) {
 }
 
 export default function App() {
+  const [view, setView] = useState<View>("overview");
   const [projects, setProjects] = useState<Project[]>([]);
+  const [activeProjectId, setActiveProjectId] = useState<number | null>(null);
   const [deployments, setDeployments] = useState<Deployment[]>([]);
-  const [name, setName] = useState("");
-  const [image, setImage] = useState("");
   const [logs, setLogs] = useState<LogLine[]>([]);
   const [logsSource, setLogsSource] = useState("system");
   const [clock, setClock] = useState("");
   const teleRef = useRef<HTMLDivElement>(null);
   const [message, setMessage] = useState("");
 
+  // Create-service modal state
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [modalName, setModalName] = useState("");
+  const [modalImage, setModalImage] = useState("");
+  const [modalError, setModalError] = useState("");
+  const [creating, setCreating] = useState(false);
+
   useEffect(() => {
     loadProjects();
     addLog([
-      { ts: now(), text: "orbit mission control online", type: "ok" },
-      { ts: now(), text: "all subsystems nominal", type: "sys" },
-      { ts: now(), text: "telemetry feed active", type: "sys" },
-      { ts: now(), text: "awaiting commands...", type: "dim" },
+      { ts: now(), text: "orbit dashboard ready", type: "ok" },
+      { ts: now(), text: "connected to local API", type: "sys" },
+      { ts: now(), text: "watching for events...", type: "dim" },
     ], "system");
 
     const t = setInterval(() => {
@@ -150,56 +125,87 @@ export default function App() {
     setLogsSource(source);
   }
 
-  async function createProject() {
-    if (!name || !image) return;
+  function openCreateModal() {
+    setModalName("");
+    setModalImage("");
+    setModalError("");
+    setShowCreateModal(true);
+  }
+
+  function closeCreateModal() {
+    if (creating) return;
+    setShowCreateModal(false);
+  }
+
+  async function submitCreateProject() {
+    const trimmedName = modalName.trim();
+    const trimmedImage = modalImage.trim();
+
+    if (!trimmedName || !trimmedImage) {
+      setModalError("Service name and Docker image are both required.");
+      return;
+    }
+
+    setCreating(true);
+    setModalError("");
+
     try {
       await fetch(`${API}/projects`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, image_name: image }),
+        body: JSON.stringify({ name: trimmedName, image_name: trimmedImage }),
       });
       await loadProjects();
     } catch {
       setProjects((prev) => [
         ...prev,
-        { id: Date.now(), name, image_name: image, status: "stopped" },
+        { id: Date.now(), name: trimmedName, image_name: trimmedImage, status: "stopped" },
       ]);
     }
+
     addLog([
-      { ts: now(), text: `satellite registered: ${name}`, type: "sys" },
-      { ts: now(), text: `image: ${image}`, type: "sys" },
-      { ts: now(), text: "status: standby — ready to launch", type: "dim" },
-    ], name);
-    setName("");
-    setImage("");
+      { ts: now(), text: `service created: ${trimmedName}`, type: "sys" },
+      { ts: now(), text: `image: ${trimmedImage}`, type: "sys" },
+      { ts: now(), text: "status: stopped — ready to deploy", type: "dim" },
+    ], trimmedName);
+
+    setCreating(false);
+    setShowCreateModal(false);
   }
 
-async function deployProject(id: number) {
-  setMessage("Deploying...");
+  async function deployProject(id: number) {
+    setMessage("Deploying...");
 
-  const res = await fetch(`${API}/projects/${id}/deploy`, {
-    method: "POST",
-  });
+    try {
+      const res = await fetch(`${API}/projects/${id}/deploy`, {
+        method: "POST",
+      });
 
-  const data = await res.json();
+      const data = await res.json();
 
-  if (!res.ok) {
-    setMessage(`❌ ${data.error}: ${data.details}`);
-    await loadProjects();
-    return;
+      if (!res.ok) {
+        setMessage(`Failed: ${data.error} — ${data.details}`);
+        await loadProjects();
+        return;
+      }
+
+      setMessage(`${data.message}`);
+      await loadProjects();
+    } catch {
+      setMessage("Failed: could not reach the API");
+    }
   }
 
-  setMessage(`✅ ${data.message}`);
-  await loadProjects();
-}
+  async function launchProject(id: number) {
+    try {
+      const res = await fetch(`${API}/projects/${id}/url`);
+      const data = await res.json();
+      alert(`${data.note}\n\n${data.command}`);
+    } catch {
+      alert("Could not reach the API to resolve a service URL.");
+    }
+  }
 
-  
-async function launchProject(id: number) {
-  const res = await fetch(`${API}/projects/${id}/url`);
-  const data = await res.json();
-
-  alert(`${data.note}\n\n${data.command}`);
-}
   async function getLogs(id: number) {
     const p = projects.find((x) => x.id === id);
     if (!p) return;
@@ -228,10 +234,16 @@ async function launchProject(id: number) {
       setProjects((prev) => prev.filter((x) => x.id !== id));
     }
     addLog([
-      { ts: now(), text: `decommissioning ${p?.name}`, type: "warn" },
+      { ts: now(), text: `deleting ${p?.name}`, type: "warn" },
       { ts: now(), text: "container stopped", type: "sys" },
       { ts: now(), text: "resources freed", type: "dim" },
     ], "system");
+
+    // If we deleted the project currently open in detail view, bounce back to overview
+    if (activeProjectId === id) {
+      setActiveProjectId(null);
+      setView("overview");
+    }
   }
 
   async function getDeployments(id: number) {
@@ -240,7 +252,6 @@ async function launchProject(id: number) {
       const data = await res.json();
       setDeployments(data);
     } catch {
-      // dev fallback: mock deployment history
       setDeployments([
         {
           id: 1,
@@ -260,220 +271,319 @@ async function launchProject(id: number) {
     }
   }
 
+  function openProjectDetail(id: number) {
+    setActiveProjectId(id);
+    setView("detail");
+    setMessage("");
+    getLogs(id);
+  }
+
+  function backToOverview() {
+    setView("overview");
+    setActiveProjectId(null);
+  }
+
   const running = projects.filter((p) => p.status === "running").length;
   const errors = projects.filter((p) => p.status === "error").length;
+  const activeProject = projects.find((p) => p.id === activeProjectId) || null;
 
   return (
     <div className="orbit-root">
-      <Stars />
-
-      <div className="planets">
-        <div className="planet planet-sun" />
-        <div className="planet planet-small" />
-        <div className="planet planet-far" />
-      </div>
-
-      {/* HUD Top Bar */}
-      <div className="hud-bar">
-        <div className="hud-logo">
-          <div className="hud-orb" />
-          <span className="hud-brand">ORBIT</span>
-          <span className="hud-tag">Deployment Control</span>
-        </div>
-        <div className="hud-right">
-          <div className="status-dot">Deleted Services</div>
-          <span className="hud-clock">{clock || "--:--:-- UTC"}</span>
-        </div>
-      </div>
-
-      {/* Main */}
-      <div className="orbit-main">
-        {/* Stats */}
-        <div className="stats-row">
-          <div className="stat-card blue">
-            <div className="stat-label">Deployments</div>
-            <div className="stat-val">{projects.length}</div>
-            <div className="stat-sub">in registry</div>
+      {/* Top bar with breadcrumb */}
+      <div className="topbar">
+        <div className="topbar-left">
+          <div className="brand-mark">
+            <span className="brand-icon">◆</span>
+            <span className="brand-name">ORBIT</span>
           </div>
-          <div className="stat-card green">
-            <div className="stat-label">Running</div>
-            <div className="stat-val">{running}</div>
-            <div className="stat-sub">live instances</div>
-          </div>
-          <div className="stat-card red">
-            <div className="stat-label">Removed Services</div>
-            <div className="stat-val">{errors}</div>
-            <div className="stat-sub">need attention</div>
-          </div>
-        </div>
-
-        {/* Launch Form */}
-        <div className="launch-form">
-          <input
-            className="orbit-input"
-            placeholder="satellite-name"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && createProject()}
-          />
-          <input
-            className="orbit-input"
-            placeholder="image:tag"
-            value={image}
-            onChange={(e) => setImage(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && createProject()}
-          />
-          <button className="launch-btn" onClick={createProject}>
-            ↑ LAUNCH
-          </button>
-        </div>
-
-        {/* Projects Table */}
-        <div className="panel">
-          <div className="panel-head">
-            <div className="panel-title">
-              <span className="panel-dot" />
-              Active Projects
-            </div>
-            <button className="panel-action" onClick={loadProjects}>
-              ↺ refresh
-            </button>
-          </div>
-          {projects.length === 0 ? (
-            <div className="empty-state">No Active running project</div>
+          <span className="crumb-sep">/</span>
+          {view === "overview" ? (
+            <span className="crumb-item active">Projects</span>
           ) : (
-            <table>
-              <thead>
-                <tr>
-                  <th>ID</th>
-                  <th>Name</th>
-                  <th>Docker-Image</th>
-                  <th>Status</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {projects.map((p) => (
-                  <tr key={p.id}>
-                    <td className="td-image">#{p.id}</td>
-                    <td className="td-name">{p.name}</td>
-                    <td className="td-image">{p.image_name}</td>
-                    <td>
-                      <StatusBadge status={p.status} />
-                    </td>
-                    <td>
-                      <div className="act-row">
-                        <button
-                          className="act-btn"
-                          onClick={() => deployProject(p.id)}
-                        >
-                          ▶ deploy
-                        </button>
-                        <button className="act-btn" onClick={() => launchProject(p.id)}>
-                        Live
-                        </button>
-                        <button
-                          className="act-btn"
-                          onClick={() => getLogs(p.id)}
-                        >
-                          ≡ logs
-                        </button>
-                        <button
-                          className="act-btn"
-                          onClick={() => getDeployments(p.id)}
-                        >
-                          ⏱ history
-                        </button>
-                        <button
-                          className="act-btn danger"
-                          onClick={() => deleteProject(p.id)}
-                        >
-                          ✕
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            <>
+              <span className="crumb-item crumb-link" onClick={backToOverview}>
+                Projects
+              </span>
+              <span className="crumb-sep">/</span>
+              <span className="crumb-item active">{activeProject?.name ?? "Service"}</span>
+            </>
           )}
         </div>
-
-        {/* Deployment History */}
-        {deployments.length > 0 && (
-          <div className="panel" style={{ marginTop: 16 }}>
-            <div className="panel-head">
-              <div className="panel-title">
-                <span className="panel-dot" />
-                Deployment History
-              </div>
-              <button className="panel-action" onClick={() => setDeployments([])}>
-                ✕ clear
-              </button>
-            </div>
-            <table>
-              <thead>
-                <tr>
-                  <th>ID</th>
-                  <th>Project ID</th>
-                  <th>Image</th>
-                  <th>Status</th>
-                  <th>Created At</th>
-                </tr>
-              </thead>
-              <tbody>
-                {deployments.map((d) => (
-                  <tr key={d.id}>
-                    <td>#{d.id}</td>
-                    <td>#{d.project_id}</td>
-                    <td className="td-image">{d.image_name}</td>
-                    <td>
-                      <StatusBadge status={d.status} />
-                    </td>
-                    <td>{new Date(d.created_at).toLocaleString()}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-
-                {message && (
-  <div className={`toast-msg ${message.startsWith("✅") ? "toast-ok" : "toast-err"}`}>
-    {message}
-  </div>
-)}
-
-        {/* Telemetry */}
-        <div className="telemetry">
-          <div className="tele-head">
-            <div className="tele-title">
-              <span className="panel-dot" />
-              Telemetry Stream
-              <span style={{ color: "rgba(0,212,255,0.3)", marginLeft: 6 }}>
-                — {logsSource}
-              </span>
-            </div>
-            <button className="panel-action" onClick={() => setLogs([])}>
-              ✕ clear
+        <div className="topbar-right">
+          <span className="topbar-clock">{clock || "--:--:-- UTC"}</span>
+          {view === "overview" && (
+            <button className="btn-outline" onClick={openCreateModal}>
+              + Create a Service
             </button>
-          </div>
-          <div className="tele-body" ref={teleRef}>
-            {logs.length === 0 ? (
-              <div className="dim" style={{ color: "rgba(180,210,220,0.2)" }}>
-                // awaiting telemetry signal...
-              </div>
-            ) : (
-              logs.map((l, i) => (
-                <div key={i} className={`tele-line ${l.type}`}>
-                  <span className="tele-ts">[{l.ts}]</span>
-                  {l.text}
-                </div>
-              ))
-            )}
-          </div>
+          )}
         </div>
       </div>
+
+      <div className="layout">
+        {/* Sidebar */}
+        <div className="sidebar">
+          <div className="sidebar-section">
+            <div
+              className={`sidebar-item ${view === "overview" ? "active" : ""}`}
+              onClick={backToOverview}
+            >
+              <span className="sidebar-icon">▤</span> Projects
+            </div>
+            <div className="sidebar-item">
+              <span className="sidebar-icon">⎘</span> Blueprints
+            </div>
+            <div className="sidebar-item">
+              <span className="sidebar-icon">▣</span> Environment Groups
+            </div>
+          </div>
+          <div className="sidebar-label">Monitor</div>
+          <div className="sidebar-section">
+            <div className="sidebar-item">
+              <span className="sidebar-icon">▥</span> Logs
+            </div>
+            <div className="sidebar-item">
+              <span className="sidebar-icon">◷</span> Events
+            </div>
+          </div>
+        </div>
+
+        {/* Main */}
+        <div className="orbit-main">
+          {view === "overview" ? (
+            <>
+              <h1 className="page-title">Overview</h1>
+
+              {/* Stats */}
+              <div className="stats-row">
+                <div className="stat-card">
+                  <div className="stat-label">Services</div>
+                  <div className="stat-val">{projects.length}</div>
+                </div>
+                <div className="stat-card">
+                  <div className="stat-label">Running</div>
+                  <div className="stat-val stat-green">{running}</div>
+                </div>
+                <div className="stat-card">
+                  <div className="stat-label">Failed</div>
+                  <div className="stat-val stat-red">{errors}</div>
+                </div>
+              </div>
+
+              {/* Projects Table */}
+              <div className="panel">
+                <div className="panel-head">
+                  <div className="panel-title">Services</div>
+                  <button className="btn-ghost" onClick={loadProjects}>
+                    Refresh
+                  </button>
+                </div>
+                {projects.length === 0 ? (
+                  <div className="empty-state">
+                    <p>No services yet.</p>
+                    <button className="btn-primary empty-cta" onClick={openCreateModal}>
+                      Create a Service
+                    </button>
+                  </div>
+                ) : (
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Service</th>
+                        <th>Image</th>
+                        <th>Status</th>
+                        <th></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {projects.map((p) => (
+                        <tr key={p.id} className="row-clickable" onClick={() => openProjectDetail(p.id)}>
+                          <td>
+                            <div className="td-name">{p.name}</div>
+                            <div className="td-id">#{p.id}</div>
+                          </td>
+                          <td className="td-mono">{p.image_name}</td>
+                          <td>
+                            <StatusBadge status={p.status} />
+                          </td>
+                          <td onClick={(e) => e.stopPropagation()}>
+                            <div className="act-row">
+                              <button className="act-btn" onClick={() => deployProject(p.id)}>
+                                Deploy
+                              </button>
+                              <button className="act-btn" onClick={() => getDeployments(p.id)}>
+                                History
+                              </button>
+                              <button className="act-btn danger" onClick={() => deleteProject(p.id)}>
+                                Delete
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+
+              {/* Deployment History */}
+              {deployments.length > 0 && (
+                <div className="panel">
+                  <div className="panel-head">
+                    <div className="panel-title">Deploy history</div>
+                    <button className="btn-ghost" onClick={() => setDeployments([])}>
+                      Clear
+                    </button>
+                  </div>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Deploy</th>
+                        <th>Service</th>
+                        <th>Image</th>
+                        <th>Status</th>
+                        <th>Created</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {deployments.map((d) => (
+                        <tr key={d.id}>
+                          <td className="td-id">#{d.id}</td>
+                          <td className="td-id">#{d.project_id}</td>
+                          <td className="td-mono">{d.image_name}</td>
+                          <td>
+                            <StatusBadge status={d.status} />
+                          </td>
+                          <td className="td-mono">{new Date(d.created_at).toLocaleString()}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </>
+          ) : (
+            activeProject && (
+              <>
+                {/* Service detail header */}
+                <div className="detail-head">
+                  <div className="detail-kicker">
+                    <span className="detail-kicker-icon">◆</span> SERVICE
+                  </div>
+                  <div className="detail-title-row">
+                    <h1 className="page-title detail-title">{activeProject.name}</h1>
+                    <StatusBadge status={activeProject.status} />
+                  </div>
+                  <div className="detail-meta">
+                    <span className="detail-meta-label">Image</span>
+                    <span className="td-mono">{activeProject.image_name}</span>
+                    <span className="detail-meta-sep">·</span>
+                    <span className="detail-meta-label">ID</span>
+                    <span className="td-id">#{activeProject.id}</span>
+                  </div>
+                </div>
+
+                {/* Action buttons */}
+                <div className="panel detail-actions-panel">
+                  <div className="panel-body detail-actions-body">
+                    <button className="btn-primary" onClick={() => deployProject(activeProject.id)}>
+                      Deploy
+                    </button>
+                    <button className="btn-outline" onClick={() => launchProject(activeProject.id)}>
+                      Open
+                    </button>
+                    <button
+                      className="btn-outline danger-outline"
+                      onClick={() => deleteProject(activeProject.id)}
+                    >
+                      Delete
+                    </button>
+                  </div>
+                </div>
+
+                {message && (
+                  <div className={`toast-msg ${message.startsWith("Failed") ? "toast-err" : "toast-ok"}`}>
+                    {message}
+                  </div>
+                )}
+
+                {/* Events log */}
+                <div className="panel">
+                  <div className="panel-head">
+                    <div className="panel-title">
+                      Events <span className="panel-sub">— {logsSource}</span>
+                    </div>
+                    <button className="btn-ghost" onClick={() => getLogs(activeProject.id)}>
+                      Refresh
+                    </button>
+                  </div>
+                  <div className="tele-body" ref={teleRef}>
+                    {logs.length === 0 ? (
+                      <div className="tele-empty">No events from the past 90 days match the selected filters.</div>
+                    ) : (
+                      logs.map((l, i) => (
+                        <div key={i} className={`tele-line ${l.type}`}>
+                          <span className="tele-ts">{l.ts}</span>
+                          {l.text}
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              </>
+            )
+          )}
+        </div>
+      </div>
+
+      {/* Create Service Modal */}
+      {showCreateModal && (
+        <div className="modal-overlay" onClick={closeCreateModal}>
+          <div className="modal-card" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-head">
+              <h2 className="modal-title">Create a Service</h2>
+              <button className="modal-close" onClick={closeCreateModal} aria-label="Close">
+                ×
+              </button>
+            </div>
+            <p className="modal-sub">Deploy a containerized service from a Docker image.</p>
+
+            <div className="modal-body">
+              <div className="form-field">
+                <label className="form-label">Service name</label>
+                <input
+                  className="orbit-input"
+                  placeholder="api-server"
+                  value={modalName}
+                  autoFocus
+                  onChange={(e) => setModalName(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && submitCreateProject()}
+                />
+              </div>
+              <div className="form-field">
+                <label className="form-label">Docker image</label>
+                <input
+                  className="orbit-input"
+                  placeholder="e.g. node:18-alpine or ghcr.io/you/app:latest"
+                  value={modalImage}
+                  onChange={(e) => setModalImage(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && submitCreateProject()}
+                />
+              </div>
+
+              {modalError && <div className="modal-error">{modalError}</div>}
+            </div>
+
+            <div className="modal-actions">
+              <button className="btn-outline" onClick={closeCreateModal} disabled={creating}>
+                Cancel
+              </button>
+              <button className="btn-primary" onClick={submitCreateProject} disabled={creating}>
+                {creating ? "Creating..." : "Create Service"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

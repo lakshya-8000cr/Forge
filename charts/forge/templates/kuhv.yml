@@ -5,6 +5,7 @@ metadata:
   name: forge-postgres-pvc
 
 spec:
+  storageClassName: gp2
   accessModes:
     - ReadWriteOnce
 

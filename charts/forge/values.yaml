@@ -1,9 +1,9 @@
 frontend:
-  image: forge-frontend:latest
+  image: 242201265494.dkr.ecr.eu-north-1.amazonaws.com/forge-frontend:latest
   port: 5173
 
 backend:
-  image: forge-backend:latest
+  image: 242201265494.dkr.ecr.eu-north-1.amazonaws.com/forge-backend:latest
   port: 8080
 
 postgres:
@@ -14,4 +14,4 @@ postgres:
   port: 5432
 
 service:
-  type: NodePort
+  type: LoadBalancer

@@ -6,9 +6,9 @@ metadata:
 
   labels:
 
-  managed-by: forge
+    managed-by: forge
 
-  app: {{ .Values.appName }}
+    app: {{ .Values.appName }}
 
 spec:
   replicas: 1
@@ -46,5 +46,4 @@ spec:
 
       volumes:
         - name: postgres-storage
-          persistentVolumeClaim:
-            claimName: forge-postgres-pvc
+          emptyDir: {}

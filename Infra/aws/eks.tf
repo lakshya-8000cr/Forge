@@ -45,7 +45,7 @@ resource "aws_eks_node_group" "forge_nodes" {
 
   instance_types = [
 
-    "t3.micro"
+    "t3.small"
   ]
 
   depends_on = [

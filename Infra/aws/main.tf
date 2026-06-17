@@ -113,7 +113,7 @@ resource "aws_security_group" "forge_ec2_sg" {
 
 resource "aws_instance" "forge_test_ec2" {
   ami           = "ami-07a0715df72e58928"
-  instance_type = "t3.micro"
+  instance_type = "t3.small"
 
   subnet_id = aws_subnet.forge_public_subnet.id
 
@@ -135,5 +135,18 @@ resource "aws_ecr_repository" "forge_backend" {
 
   tags = {
     Name = "forge-backend"
+  }
+}
+
+
+resource "aws_ecr_repository" "forge_frontend" {
+  name = "forge-frontend"
+
+  image_scanning_configuration {
+    scan_on_push = true
+  }
+
+  tags = {
+    Name = "forge-frontend"
   }
 }
