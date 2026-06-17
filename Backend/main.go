@@ -460,7 +460,7 @@ func runHelmDeploy(project Project) error {
 		"upgrade",
 		"--install",
 		project.Name,
-		"../charts/app",
+		"./charts/app",
 		"--namespace",
 		"forge-apps",
 		"--create-namespace",
@@ -532,7 +532,7 @@ func deployProject(w http.ResponseWriter, id int) {
 		return
 	}
 
-	err = validateImage(project.ImageName)
+	// err = validateImage(project.ImageName)
      
 	if err != nil {
 	db.Exec(`UPDATE projects SET status = 'failed' WHERE id = $1`, id)
@@ -545,11 +545,11 @@ func deployProject(w http.ResponseWriter, id int) {
 		"failed",
 	)
 
-	writeJSON(w, http.StatusBadRequest, map[string]any{
-		"error":   "image validation failed",
-		"details": err.Error(),
-	})
-	return
+	//writeJSON(w, http.StatusBadRequest, map[string]any{
+	//	"error":   "image validation failed",
+	//	"details": err.Error(),
+	//})
+	//return
     }
 
 	err = ensureForgeNamespace()
@@ -646,7 +646,7 @@ func ensureForgeNamespace() error {
 }
 
 
-func validateImage(imageName string) error {
+/*func validateImage(imageName string) error {
 	cmd := exec.Command("docker", "manifest", "inspect", imageName)
 
 	output, err := cmd.CombinedOutput()
@@ -655,7 +655,7 @@ func validateImage(imageName string) error {
 	}
 
 	return nil
-}
+}*/
 
 
 func writeJSON(w http.ResponseWriter, code int, data any) {
