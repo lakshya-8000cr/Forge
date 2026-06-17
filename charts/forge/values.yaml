@@ -1,6 +1,6 @@
 frontend:
   image: 242201265494.dkr.ecr.eu-north-1.amazonaws.com/forge-frontend:latest
-  port: 5173
+  port: 80
 
 backend:
   image: 242201265494.dkr.ecr.eu-north-1.amazonaws.com/forge-backend:latest

@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef } from "react";
 import "./App.css";
 
-const API = "http://localhost:8080";
+const API = "/api";
 
 interface Project {
   id: number;
