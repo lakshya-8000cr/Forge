@@ -246,7 +246,7 @@ func getMinikubeServiceURL(serviceName string) (string, error) {
 	ipCmd := exec.Command("minikube", "ip")
 	ipOutput, err := ipCmd.CombinedOutput()
 	if err != nil {
-		return "", fmt.Errorf(string(ipOutput))
+		return "", fmt.Errorf("%s",string(ipOutput))
 	}
 
 	nodePortCmd := exec.Command(
@@ -260,7 +260,7 @@ func getMinikubeServiceURL(serviceName string) (string, error) {
 
 	portOutput, err := nodePortCmd.CombinedOutput()
 	if err != nil {
-		return "", fmt.Errorf(string(portOutput))
+		return "", fmt.Errorf("%s",string(portOutput))
 	}
 
 	ip := strings.TrimSpace(string(ipOutput))
