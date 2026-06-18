@@ -224,16 +224,9 @@ func getProjectURL(w http.ResponseWriter, id int) {
 	var project Project
 
 	err := db.QueryRow(
-		`SELECT id, name, image_name, status
-		 FROM projects
-		 WHERE id = $1`,
+		`SELECT id, name, image_name, status FROM projects WHERE id = $1`,
 		id,
-	).Scan(
-		&project.ID,
-		&project.Name,
-		&project.ImageName,
-		&project.Status,
-	)
+	).Scan(&project.ID, &project.Name, &project.ImageName, &project.Status)
 
 	if err != nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{
@@ -242,10 +235,10 @@ func getProjectURL(w http.ResponseWriter, id int) {
 		return
 	}
 
+	baseURL := "http://a6228a9f5a97041acb1f84aa6ada2478-774918050.eu-north-1.elb.amazonaws.com"
+
 	writeJSON(w, http.StatusOK, map[string]string{
-		"service_name": project.Name,
-		"command":      "minikube service " + project.Name,
-		"note":         "Run this command in a terminal. Minikube will open the app URL in your browser.",
+		"url": baseURL + "/apps/" + project.Name,
 	})
 }
 
@@ -455,21 +448,22 @@ func runHelmDeploy(project Project) error {
 		tag = imageParts[1]
 	}
 
-	cmd := exec.Command(
-		"helm",
-		"upgrade",
-		"--install",
-		project.Name,
-		"./charts/app",
-		"--namespace",
-		"forge-apps",
-		"--create-namespace",
-		"--set", fmt.Sprintf("appName=%s", project.Name),
-		"--set", fmt.Sprintf("image.repository=%s", repository),
-		"--set", fmt.Sprintf("image.tag=%s", tag),
-		"--set", "service.type=NodePort",
-	)
-
+cmd := exec.Command(
+	"helm",
+	"upgrade",
+	"--install",
+	project.Name,
+	"./charts/app",
+	"--namespace",
+	"forge-apps",
+	"--create-namespace",
+	"--set", fmt.Sprintf("appName=%s", project.Name),
+	"--set", fmt.Sprintf("image.repository=%s", repository),
+	"--set", fmt.Sprintf("image.tag=%s", tag),
+	"--set", "service.type=ClusterIP",
+	"--set", "ingress.enabled=true",
+	"--set", "ingress.basePath=/apps",
+)
 	output, err := cmd.CombinedOutput()
 	log.Println(string(output))
 

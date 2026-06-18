@@ -196,15 +196,16 @@ export default function App() {
     }
   }
 
-  async function launchProject(id: number) {
-    try {
-      const res = await fetch(`${API}/projects/${id}/url`);
-      const data = await res.json();
-      alert(`${data.note}\n\n${data.command}`);
-    } catch {
-      alert("Could not reach the API to resolve a service URL.");
-    }
+async function launchProject(id: number) {
+  const res = await fetch(`${API}/projects/${id}/url`);
+  const data = await res.json();
+
+  if (data.url) {
+    window.open(data.url, "_blank");
+  } else {
+    alert("App URL not found");
   }
+}
 
   async function getLogs(id: number) {
     const p = projects.find((x) => x.id === id);

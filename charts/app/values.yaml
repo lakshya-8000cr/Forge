@@ -10,3 +10,7 @@ containerPort: 80
 service:
   type: NodePort
   port: 80
+
+ingress:
+  enabled: true
+  basePath: /apps
