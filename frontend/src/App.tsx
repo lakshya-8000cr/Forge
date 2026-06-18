@@ -207,12 +207,15 @@ async function launchProject(id: number) {
   }
 }
 
-  async function getLogs(id: number) {
-    const p = projects.find((x) => x.id === id);
-    if (!p) return;
-    try {
-      const res = await fetch(`${API}/projects/${id}/logs`);
-      const data = await res.json();
+async function getLogs(id: number) {
+  const p = projects.find((x) => x.id === id);
+  if (!p) return;
+  try {
+    const res = await fetch(`${API}/projects/${id}/logs`);
+    const data = await res.json();
+    
+    // Agar backend se sach mein string logs aaye hain
+    if (data.logs && data.logs.trim() !== "") {
       addLog(
         String(data.logs).split("\n").map((l) => ({
           ts: now(),
@@ -221,31 +224,22 @@ async function launchProject(id: number) {
         })),
         p.name
       );
-    } catch {
-      addLog((LOG_DATA[p.status] || LOG_DATA.stopped)(p), p.name);
+    } else {
+      // Agar backend connect ho gaya par logs khali mile
+      addLog([{ ts: now(), text: `[System] No active log streams returned from EKS context for ${p.name}.`, type: "dim" }], p.name);
     }
+  } catch {
+    // Agar API unreachable hai toh fallback static logs dikhao
+    addLog((LOG_DATA[p.status] || LOG_DATA.stopped)(p), p.name);
   }
+}
 
-  async function deleteProject(id: number) {
-    const p = projects.find((x) => x.id === id);
-    try {
-      await fetch(`${API}/projects/${id}/delete`, { method: "DELETE" });
-      await loadProjects();
-    } catch {
-      setProjects((prev) => prev.filter((x) => x.id !== id));
-    }
-    addLog([
-      { ts: now(), text: `deleting ${p?.name}`, type: "warn" },
-      { ts: now(), text: "container stopped", type: "sys" },
-      { ts: now(), text: "resources freed", type: "dim" },
-    ], "system");
-
-    // If we deleted the project currently open in detail view, bounce back to overview
-    if (activeProjectId === id) {
-      setActiveProjectId(null);
-      setView("overview");
-    }
-  }
+// App.tsx ke andar delete function ko aise update karo
+const deleteProject = (id: number) => {
+  setProjects((prevProjects) => prevProjects.filter(project => project.id !== id));
+  
+  console.log(`Project with ID ${id} hidden from frontend UI, but safe in backend!`);
+};
 
   async function getDeployments(id: number) {
     try {
@@ -271,6 +265,7 @@ async function launchProject(id: number) {
       ]);
     }
   }
+
 
   function openProjectDetail(id: number) {
     setActiveProjectId(id);
@@ -492,6 +487,10 @@ async function launchProject(id: number) {
                     <button className="btn-outline" onClick={() => launchProject(activeProject.id)}>
                       Open
                     </button>
+
+                    <button className="btn-outline" onClick={() => getLogs(activeProject.id)}>
+  Get Logs 
+</button>
                     <button
                       className="btn-outline danger-outline"
                       onClick={() => deleteProject(activeProject.id)}

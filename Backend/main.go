@@ -127,35 +127,6 @@ func cors(next http.Handler) http.Handler {
 }
 
 
-func deleteProjectDeployment(w http.ResponseWriter, id int) {
-	for i := range projects {
-		if projects[i].ID == id {
-			err := deleteHelmRelease(projects[i].Name)
-			if err != nil {
-				projects[i].Status = "delete_failed"
-				writeJSON(w, http.StatusInternalServerError, map[string]any{
-					"error":   "delete failed",
-					"details": err.Error(),
-				})
-				return
-			}
-
-			projects[i].Status = "deleted"
-
-			writeJSON(w, http.StatusOK, map[string]any{
-				"message": "deployment deleted",
-				"project": projects[i],
-			})
-			return
-		}
-	}
-
-	writeJSON(w, http.StatusNotFound, map[string]string{
-		"error": "project not found",
-	})
-}
-
-
 func projectDetailHandler(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimPrefix(r.URL.Path, "/projects/")
 	parts := strings.Split(strings.Trim(path, "/"), "/")
@@ -187,11 +158,6 @@ func projectDetailHandler(w http.ResponseWriter, r *http.Request) {
 
 	if len(parts) == 2 && parts[1] == "status" && r.Method == http.MethodGet {
 	getProjectStatus(w, id)
-	return
-    }
-
-	if len(parts) == 2 && parts[1] == "delete" && r.Method == http.MethodDelete {
-	deleteProjectDeployment(w, id)
 	return
     }
 
