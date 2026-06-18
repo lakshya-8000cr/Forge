@@ -514,7 +514,7 @@ async function launchProject(id: number) {
                       Events <span className="panel-sub">— {logsSource}</span>
                     </div>
                     <button className="btn-ghost" onClick={() => getLogs(activeProject.id)}>
-                      Refresh
+                      Refresh your app
                     </button>
                   </div>
                   <div className="tele-body" ref={teleRef}>
