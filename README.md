@@ -1,39 +1,150 @@
-# Forge
+# Forge 
 
-Forge is a Kubernetes-native mini deployment platform inspired by Render/Railway.
+**Forge** is a Kubernetes-native mini Platform-as-a-Service (PaaS) inspired by Render, Railway and modern internal developer platforms.
 
-It allows users to create projects, deploy real public Docker images to Kubernetes using Helm, expose deployed apps through Nginx Ingress on AWS EKS, check pod status, view logs, delete deployments, and track deployment history.
+Forge allows users to deploy **real Docker images** to AWS EKS clusters using Helm, manage deployments from a dashboard, and expose applications through a shared Nginx Ingress with public URLs.
 
-## Tech Stack
+The goal of Forge is to provide a lightweight self-hosted platform where developers can deploy, monitor and manage applications without directly interacting with Kubernetes.
 
-- Frontend: React + TypeScript + Vite, Nginx
-- Backend: Go
-- Database: PostgreSQL
-- Containerization: Docker / Docker Compose
-- Orchestration: Kubernetes, AWS EKS
-- Deployment Engine: Helm
-- Cloud Infrastructure: AWS, Terraform
-- Registry: Amazon ECR, Docker Hub / GHCR public images
-- Networking: Nginx Ingress Controller, AWS ELB
-- Storage: EBS CSI Driver
+---
+
+## Architecture
+
+```text
+Internet
+↓
+AWS ELB
+↓
+Nginx Ingress Controller
+↓
+Forge Frontend
+↓
+Forge Backend
+↓
+PostgreSQL
+↓
+Helm
+↓
+EKS Kubernetes API
+↓
+forge-apps Namespace
+↓
+User Applications
+```
+
+---
 
 ## Features
 
-- Create deployment projects
-- Store projects and deployment history in PostgreSQL
-- Deploy real Docker images to Kubernetes using Helm
-- Deploy apps into a dedicated `forge-apps` namespace
-- Expose deployed apps through shared Ingress routes
-- Generate public app URLs like `/apps/<project-name>`
-- View Kubernetes pod status
-- View pod logs
-- Delete Helm deployments
-- Track deployment history
-- Dockerized frontend, backend, and PostgreSQL setup
-- Production-style AWS EKS deployment using Terraform
+### Platform Features
 
-```Project Structure
+* Create deployment projects
+* Store project metadata in PostgreSQL
+* Deploy real Docker images to AWS EKS
+* Automatic Helm-based deployments
+* Dedicated `forge-apps` namespace
+* Generate public application URLs
+* Shared AWS ELB + Nginx Ingress routing
+* View deployment history
+* View application logs
+* Delete deployments
+* RBAC-secured Kubernetes access
+
+---
+
+## Tech Stack
+
+### Frontend
+
+* React
+* TypeScript
+* Vite
+* Nginx
+
+### Backend
+
+* Go
+
+### Database
+
+* PostgreSQL
+
+### Cloud Infrastructure
+
+* AWS EKS
+* Amazon ECR
+* AWS ELB
+* Amazon VPC
+
+### DevOps
+
+* Docker
+* Kubernetes
+* Helm
+* Terraform
+* GitHub Actions
+
+### Networking
+
+* Nginx Ingress Controller
+
+---
+
+## Deployment Flow
+
+```text
+User
+↓
+Create Project
+↓
+Deploy
+↓
+Forge Backend
+↓
+Helm
+↓
+EKS Kubernetes API
+↓
+Deployment + Service + Ingress
+↓
+Public Application URL
+```
+
+---
+
+## Verified Public Image Deployments
+
+### Example 1
+
+```text
+Project Name: nginx-prod
+
+Docker Image:
+nginx:latest
+```
+
+### Example 2
+
+```text
+Project Name: whoami-demo
+
+Docker Image:
+traefik/whoami:latest
+```
+
+Example Public URL:
+
+```text
+http://<INGRESS_ELB>/apps/whoami-demo
+```
+
+---
+
+## Project Structure
+
+```text
 Forge/
+
 ├── Backend/
 │   ├── main.go
 │   ├── go.mod
@@ -45,80 +156,137 @@ Forge/
 │   └── Dockerfile
 │
 ├── charts/
+│   ├── forge/
 │   └── app/
-│       ├── Chart.yaml
-│       ├── values.yaml
-│       └── templates/
+│
+├── k8s/
 │
 ├── infra/
-│   └── docker-compose.yml
+│   └── aws/
+│
+├── .github/
+│   └── workflows/
 │
 └── README.md
 ```
 
+---
+
 ## Local Development
 
-Start PostgreSQL:
+### Start PostgreSQL
 
 ```bash
 cd infra
+
 docker compose up postgres
 ```
 
-Start backend:
+### Start Backend
 
 ```bash
 cd Backend
+
 go run main.go
 ```
 
-Start frontend:
+### Start Frontend
 
 ```bash
 cd frontend
+
 npm run dev
 ```
 
-Open frontend:
+Frontend URL:
 
 ```text
 http://localhost:5173
 ```
 
-## Kubernetes Requirements
+---
 
-Make sure Minikube is running:
+## AWS Deployment
+
+Configure Kubernetes:
 
 ```bash
-minikube start
+aws eks update-kubeconfig \
+--region eu-north-1 \
+--name forge-eks
+```
+
+Verify:
+
+```bash
 kubectl get nodes
+
 helm version
 ```
-## Example Project
 
-```text
-Project Name: whoami-demo
-Image Name: traefik/whoami:latest
-```
-if you get the Hostname ip etc then test is passed.
+---
 
-## Important Note
+## CI/CD
 
-Forge uses Kubernetes ServiceAccount + RBAC to allow the backend pod to create deployments, services, pods, logs, namespaces, and ingresses.
-User apps are deployed into the forge-apps namespace.
-Public app routes are exposed through a shared AWS ELB + Nginx Ingress Controller.
-Current app URLs use path-based routing: /apps/<project-name>.
-Image validation is currently skipped for EKS compatibility and can be re-added later using registry APIs.
+Forge uses GitHub Actions for:
+
+* Backend build verification
+* Frontend build verification
+* Docker image builds
+* Amazon ECR image pushes
+* Automatic EKS deployment updates
+
+---
+
+## Kubernetes Resources Used
+
+* Deployments
+* Services
+* Namespaces
+* Ingress
+* Service Accounts
+* RBAC
+* Cluster Roles
+* Cluster Role Bindings
+* Persistent Volume Claims
+
+---
+
+## Lessons Learned
+
+During development, several production-level issues were debugged and resolved:
+
+* PVC binding failures
+* EBS CSI provisioning issues
+* ImagePullBackOff errors
+* CrashLoopBackOff errors
+* AWS ELB configuration issues
+* Ingress routing problems
+* ServiceAccount permission errors
+* RBAC misconfigurations
+* Kubernetes scheduling limitations
+* Node capacity constraints
+
+---
 
 ## Future Roadmap
 
-* Add backend retry logic for PostgreSQL startup
-* Add image validation before deployment
-* Add Ingress-based public URLs
-* Deploy Forge itself to Kubernetes
-* Add Kubernetes ServiceAccount and RBAC
-* Add Terraform AWS infrastructure
-* Deploy on AWS EKS
-* Add GitHub Actions CI/CD
-* Add GitHub repo-based deployment
-* Add automatic image build and push to GHCR
+* Monitoring with Prometheus
+* Grafana dashboards
+* Loki log aggregation
+* HTTPS with cert-manager
+* Custom domains
+* GitHub repository deployments
+* Automatic image builds
+* Registry validation
+* Authentication & multi-user support
+
+---
+
+## License
+
+MIT License
+
+---
+
+
