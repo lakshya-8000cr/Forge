@@ -429,7 +429,7 @@ cmd := exec.Command(
 	"--set", "service.type=ClusterIP",
 	"--set", "ingress.enabled=true",
 	"--set", "ingress.basePath=/apps",
-)git 
+)
 	output, err := cmd.CombinedOutput()
 	log.Println(string(output))
 
