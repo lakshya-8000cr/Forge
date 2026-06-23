@@ -1,50 +1,67 @@
-# Forge 
+# Forge
 
-**Forge** is a Kubernetes-native mini Platform-as-a-Service (PaaS) inspired by Render, Railway and modern internal developer platforms.
+> A lightweight, self-hosted Platform-as-a-Service (PaaS) inspired by Render and Railway that allows developers to deploy real Docker images to Kubernetes without directly interacting with cluster infrastructure.
 
-Forge allows users to deploy **real Docker images** to AWS EKS clusters using Helm, manage deployments from a dashboard, and expose applications through a shared Nginx Ingress with public URLs.
-
-The goal of Forge is to provide a lightweight self-hosted platform where developers can deploy, monitor and manage applications without directly interacting with Kubernetes.
+> ⚠️ The project is currently under active development.
 
 ---
 
-## Architecture
+# The Problem
+
+Deploying applications to Kubernetes usually requires developers to manually configure deployments, services, ingresses, namespaces, RBAC permissions and cloud infrastructure.
+
+For small teams and personal projects, this introduces significant operational overhead.
+
+Most developers don't want to SSH into servers, write Kubernetes manifests or manage networking just to deploy an application.
+
+They simply want:
 
 ```text
-Internet
+Docker Image
 ↓
-AWS ELB
+
+Deploy
+
 ↓
-Nginx Ingress Controller
-↓
-Forge Frontend
-↓
-Forge Backend
-↓
-PostgreSQL
-↓
-Helm
-↓
-EKS Kubernetes API
-↓
-forge-apps Namespace
-↓
-User Applications
+
+Get a Public URL
 ```
+
+without worrying about the underlying infrastructure.
 
 ---
 
-## Features
+# How Forge Solves It
+
+Forge provides a lightweight self-hosted alternative to modern deployment platforms.
+
+Users create a project from a dashboard, provide a Docker image and Forge automatically provisions the necessary Kubernetes resources.
+
+Forge handles:
+
+* Deployment creation
+* Service provisioning
+* Ingress routing
+* Public URL generation
+* Namespace management
+* Deployment history
+* Log viewing
+* RBAC-secured cluster access
+
+All deployments are orchestrated through Helm and run inside AWS EKS.
+
+---
+
+# Features
 
 ### Platform Features
 
 * Create deployment projects
-* Store project metadata in PostgreSQL
-* Deploy real Docker images to AWS EKS
+* Deploy real Docker images
 * Automatic Helm-based deployments
 * Dedicated `forge-apps` namespace
-* Generate public application URLs
-* Shared AWS ELB + Nginx Ingress routing
+* Public application URLs
+* Shared Nginx Ingress routing
 * View deployment history
 * View application logs
 * Delete deployments
@@ -52,14 +69,121 @@ User Applications
 
 ---
 
-## Tech Stack
+# Architecture
+
+```text
+Internet
+↓
+
+AWS ELB
+↓
+
+Nginx Ingress Controller
+↓
+
+Forge Frontend
+
+↓
+
+Forge Backend
+
+↓
+
+PostgreSQL
+
+↓
+
+Helm
+
+↓
+
+AWS EKS Kubernetes API
+
+↓
+
+forge-apps Namespace
+
+↓
+
+User Applications
+```
+
+---
+
+# How It Works
+
+```text
+User
+↓
+
+Creates Project
+
+↓
+
+Clicks Deploy
+
+↓
+
+Forge Backend
+
+↓
+
+Helm
+
+↓
+
+Kubernetes API
+
+↓
+
+Deployment
+
+↓
+
+Service
+
+↓
+
+Ingress
+
+↓
+
+Public URL Generated
+```
+
+The Forge backend acts as a mini platform engineer by communicating with the Kubernetes API and provisioning infrastructure automatically.
+
+---
+
+# Example Deployment
+
+Input:
+
+```text
+Project Name:
+whoami-demo
+
+Docker Image:
+traefik/whoami:latest
+```
+
+Output:
+
+```text
+http://<INGRESS_ELB>/apps/whoami-demo
+```
+
+The application becomes publicly accessible without writing any Kubernetes manifests.
+
+---
+
+# Tech Stack
 
 ### Frontend
 
 * React
 * TypeScript
 * Vite
-* Nginx
 
 ### Backend
 
@@ -90,74 +214,16 @@ User Applications
 
 ---
 
-## Deployment Flow
-
-```text
-User
-↓
-Create Project
-↓
-Deploy
-↓
-Forge Backend
-↓
-Helm
-↓
-EKS Kubernetes API
-↓
-Deployment + Service + Ingress
-↓
-Public Application URL
-```
-
----
-
-## Verified Public Image Deployments
-
-### Example 1
-
-```text
-Project Name: nginx-prod
-
-Docker Image:
-nginx:latest
-```
-
-### Example 2
-
-```text
-Project Name: whoami-demo
-
-Docker Image:
-traefik/whoami:latest
-```
-
-Example Public URL:
-
-```text
-http://<INGRESS_ELB>/apps/whoami-demo
-```
-
----
-
-## Project Structure
+# Project Structure
 
 ```text
 Forge/
 
 ├── Backend/
-│   ├── main.go
-│   ├── go.mod
-│   └── Dockerfile
 │
 ├── frontend/
-│   ├── src/
-│   ├── package.json
-│   └── Dockerfile
 │
 ├── charts/
-│   ├── forge/
-│   └── app/
 │
 ├── k8s/
 │
@@ -172,9 +238,9 @@ Forge/
 
 ---
 
-## Local Development
+# Local Development
 
-### Start PostgreSQL
+Start PostgreSQL
 
 ```bash
 cd infra
@@ -182,7 +248,7 @@ cd infra
 docker compose up postgres
 ```
 
-### Start Backend
+Start Backend
 
 ```bash
 cd Backend
@@ -190,7 +256,7 @@ cd Backend
 go run main.go
 ```
 
-### Start Frontend
+Start Frontend
 
 ```bash
 cd frontend
@@ -198,7 +264,7 @@ cd frontend
 npm run dev
 ```
 
-Frontend URL:
+Open:
 
 ```text
 http://localhost:5173
@@ -206,7 +272,7 @@ http://localhost:5173
 
 ---
 
-## AWS Deployment
+# AWS Setup
 
 Configure Kubernetes:
 
@@ -226,19 +292,19 @@ helm version
 
 ---
 
-## CI/CD
+# CI/CD
 
-Forge uses GitHub Actions for:
+Forge uses GitHub Actions to:
 
-* Backend build verification
-* Frontend build verification
-* Docker image builds
-* Amazon ECR image pushes
-* Automatic EKS deployment updates
+* Verify backend builds
+* Verify frontend builds
+* Build Docker images
+* Push images to Amazon ECR
+* Update EKS deployments
 
 ---
 
-## Kubernetes Resources Used
+# Kubernetes Resources Used
 
 * Deployments
 * Services
@@ -252,7 +318,7 @@ Forge uses GitHub Actions for:
 
 ---
 
-## Lessons Learned
+# Production Debugging Challenges Solved
 
 During development, several production-level issues were debugged and resolved:
 
@@ -261,7 +327,7 @@ During development, several production-level issues were debugged and resolved:
 * ImagePullBackOff errors
 * CrashLoopBackOff errors
 * AWS ELB configuration issues
-* Ingress routing problems
+* Ingress routing issues
 * ServiceAccount permission errors
 * RBAC misconfigurations
 * Kubernetes scheduling limitations
@@ -269,7 +335,7 @@ During development, several production-level issues were debugged and resolved:
 
 ---
 
-## Future Roadmap
+# Future Roadmap
 
 * Monitoring with Prometheus
 * Grafana dashboards
@@ -283,10 +349,9 @@ During development, several production-level issues were debugged and resolved:
 
 ---
 
-## License
+# License
 
 MIT License
-
 ---
 
 
