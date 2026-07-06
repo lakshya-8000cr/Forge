@@ -10,6 +10,10 @@ import (
     "fmt"
     "database/sql"
 	"os"
+	_ "net/http/pprof"
+	"time"
+	"runtime"
+	"context"
 
 _ "github.com/lib/pq"
 )
@@ -31,6 +35,7 @@ func getEnv(key string, fallback string) string {
 	}
 	return value
 }
+
 
 func connectDB() {
 	host := getEnv("POSTGRES_HOST", "localhost")
@@ -54,12 +59,35 @@ func connectDB() {
 		log.Fatal("DB open error:", err)
 	}
 
+	// after using the go profiling i realised that my connection pools were unstable , not rightly configured
+	// so i just configured the database pooling 
+
+	db.SetMaxIdleConns(25)                  // Warm authenticated connections
+	db.SetMaxOpenConns(50)                  // Prevent unlimited connections
+	db.SetConnMaxLifetime(5 * time.Minute)  // Recycle periodically
+	db.SetConnMaxIdleTime(2 * time.Minute)  // Close stale idle connections
+
 	err = db.Ping()
 	if err != nil {
 		log.Fatal("DB ping error:", err)
 	}
 
 	log.Println("Connected to PostgreSQL")
+}
+
+func logDBStats() {
+	stats := db.Stats()
+
+	log.Printf(
+		"[DB Pool] Open=%d InUse=%d Idle=%d WaitCount=%d WaitDuration=%v MaxIdleClosed=%d MaxLifetimeClosed=%d",
+		stats.OpenConnections,
+		stats.InUse,
+		stats.Idle,
+		stats.WaitCount,
+		stats.WaitDuration,
+		stats.MaxIdleClosed,
+		stats.MaxLifetimeClosed,
+	)
 }
 
 func createTables() {
@@ -105,11 +133,41 @@ func main() {
 	mux.HandleFunc("/health", healthHandler)
 	mux.HandleFunc("/projects", projectsHandler)
 	mux.HandleFunc("/projects/", projectDetailHandler)
+	go func() {  // this is where we have setup the profilling in go 
+		//profilling ?=> can show how much resourcres are alloacted for the code parts , everything from varibale to func , so that we can optimize the algos
+    log.Println("pprof server running on :6060")
+    log.Println(http.ListenAndServe("localhost:6060", nil))
+    }()
 
 	log.Println("Forge backend running on :8080")
-	http.ListenAndServe(":8080", cors(mux))
+	srv := &http.Server{
+	Addr:              ":8080",
+	Handler:           mux,
+	ReadTimeout:       5 * time.Second,
+	WriteTimeout:      10 * time.Second,
+	IdleTimeout:       30 * time.Second,
+	ReadHeaderTimeout: 2 * time.Second,
+}
+
+log.Fatal(srv.ListenAndServe())
 	
 }
+
+
+func startRuntimeMonitor() {
+	go func() {
+		ticker := time.NewTicker(10 * time.Second)
+		defer ticker.Stop()
+
+		for range ticker.C {
+			log.Printf(
+				"[Runtime] Goroutines=%d",
+				runtime.NumGoroutine(),
+			)
+		}
+	}()
+}
+
 
 func cors(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -162,7 +220,7 @@ func projectDetailHandler(w http.ResponseWriter, r *http.Request) {
     }
 
 	if len(parts) == 2 && parts[1] == "logs" && r.Method == http.MethodGet {
-	getProjectLogs(w, id)
+	getProjectLogs(w, r,id)
 	return
     }
 	
@@ -174,7 +232,7 @@ func projectDetailHandler(w http.ResponseWriter, r *http.Request) {
 
 
 if len(parts) == 2 && parts[1] == "url" && r.Method == http.MethodGet {
-	getProjectURL(w, id)
+	getProjectURL(w,r, id)
 	return
 }
 
@@ -186,13 +244,17 @@ if len(parts) == 2 && parts[1] == "url" && r.Method == http.MethodGet {
 
 }
 
-func getProjectURL(w http.ResponseWriter, id int) {
+func getProjectURL(w http.ResponseWriter, r *http.Request, id int) {  // updated url
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+	defer cancel()
+
 	var project Project
 
-	err := db.QueryRow(
-		`SELECT id, name, image_name, status FROM projects WHERE id = $1`,
-		id,
-	).Scan(&project.ID, &project.Name, &project.ImageName, &project.Status)
+	err := db.QueryRowContext(ctx, `
+		SELECT id, name, image_name, status
+		FROM projects
+		WHERE id = $1
+	`, id).Scan(&project.ID, &project.Name, &project.ImageName, &project.Status)
 
 	if err != nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{
@@ -201,7 +263,10 @@ func getProjectURL(w http.ResponseWriter, id int) {
 		return
 	}
 
-	baseURL := "http://a6228a9f5a97041acb1f84aa6ada2478-774918050.eu-north-1.elb.amazonaws.com"
+	baseURL := getEnv(
+		"FORGE_PUBLIC_BASE_URL",
+		"http://a6228a9f5a97041acb1f84aa6ada2478-774918050.eu-north-1.elb.amazonaws.com",
+	)
 
 	writeJSON(w, http.StatusOK, map[string]string{
 		"url": baseURL + "/apps/" + project.Name,
@@ -323,15 +388,17 @@ func getProjectStatus(w http.ResponseWriter, id int) {
 }
 
 
-func getProjectLogs(w http.ResponseWriter, id int) {
+func getProjectLogs(w http.ResponseWriter, r *http.Request, id int) {  // updated get projcts
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+	defer cancel()
+
 	var project Project
 
-	err := db.QueryRow(
-		`SELECT id, name, image_name, status
-		 FROM projects
-		 WHERE id = $1`,
-		id,
-	).Scan(
+	err := db.QueryRowContext(ctx, `
+		SELECT id, name, image_name, status
+		FROM projects
+		WHERE id = $1
+	`, id).Scan(
 		&project.ID,
 		&project.Name,
 		&project.ImageName,
@@ -360,24 +427,32 @@ func getProjectLogs(w http.ResponseWriter, id int) {
 	})
 }
 
+func getKubernetesLogs(appName string) (string, error) {  // updated
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
 
-func getKubernetesLogs(appName string) (string, error) {
-	cmd := exec.Command(
+	cmd := exec.CommandContext(
+		ctx,
 		"kubectl",
 		"logs",
+		"-n",
+		"forge-apps",
 		"-l",
 		fmt.Sprintf("app=%s", appName),
 		"--tail=100",
 	)
 
 	output, err := cmd.CombinedOutput()
+	if ctx.Err() == context.DeadlineExceeded {
+		return "", fmt.Errorf("kubectl logs timed out")
+	}
+
 	if err != nil {
 		return "", fmt.Errorf("%s", string(output))
 	}
 
 	return string(output), nil
 }
-
 
 func getKubernetesStatus(appName string) (string, error) {
 	cmd := exec.Command(
@@ -625,9 +700,22 @@ func writeJSON(w http.ResponseWriter, code int, data any) {
 }
 
 
-func projectsHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method == http.MethodGet {
-		rows, err := db.Query(`SELECT id, name, image_name, status FROM projects ORDER BY id DESC`)
+func projectsHandler(w http.ResponseWriter, r *http.Request) {  // updated version
+
+	switch r.Method {
+
+	case http.MethodGet:
+
+		// Create a timeout context for the database query
+		ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+		defer cancel()
+
+		rows, err := db.QueryContext(
+			ctx,
+			`SELECT id, name, image_name, status
+			 FROM projects
+			 ORDER BY id DESC`,
+		)
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{
 				"error": err.Error(),
@@ -640,28 +728,43 @@ func projectsHandler(w http.ResponseWriter, r *http.Request) {
 
 		for rows.Next() {
 			var p Project
-			err := rows.Scan(&p.ID, &p.Name, &p.ImageName, &p.Status)
-			if err != nil {
+
+			if err := rows.Scan(
+				&p.ID,
+				&p.Name,
+				&p.ImageName,
+				&p.Status,
+			); err != nil {
+
 				writeJSON(w, http.StatusInternalServerError, map[string]string{
 					"error": err.Error(),
 				})
 				return
 			}
+
 			list = append(list, p)
 		}
 
+		// Check if iteration ended because of an error
+		if err := rows.Err(); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{
+				"error": err.Error(),
+			})
+			return
+		}
+
 		writeJSON(w, http.StatusOK, list)
-		return
-	}
 
-	if r.Method == http.MethodPost {
+	case http.MethodPost:
+
 		createProject(w, r)
-		return
-	}
 
-	writeJSON(w, http.StatusMethodNotAllowed, map[string]string{
-		"error": "method not allowed",
-	})
+	default:
+
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{
+			"error": "method not allowed",
+		})
+	}
 }
 
 func createProject(w http.ResponseWriter, r *http.Request) {

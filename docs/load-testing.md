@@ -97,3 +97,16 @@ Evaluate Forge API performance under concurrent read traffic.
 - Compare latency, throughput and failure rate.
 
 
+Hypothesis:
+Single backend replica is the throughput bottleneck.
+
+Experiment:
+Increase Forge backend replicas from 1 to 3.
+
+Result:
+Throughput increased from 676 RPS to 882 RPS while reducing average latency from 43s to 446ms and request failures from 6.2% to 0.1%.
+
+Conclusion:
+Backend concurrency was the primary bottleneck under this workload.
+
+
