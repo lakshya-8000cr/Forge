@@ -1,7 +1,7 @@
 import http from "k6/http";
 import { check, sleep } from "k6";
 
-const BASE_URL = "http://a6228a9f5a97041acb1f84aa6ada2478-774918050.eu-north-1.elb.amazonaws.com";
+const BASE_URL = "http://localhost:8080";
 
 export const options = {
   scenarios: {
@@ -36,17 +36,17 @@ export const options = {
 };
 
 export function health() {
-  const res = http.get(`${BASE_URL}/api/health`);
+  const res = http.get(`${BASE_URL}/health`);
   check(res, { "health 200": (r) => r.status === 200 });
 }
 
 export function projects() {
-  const res = http.get(`${BASE_URL}/api/projects`);
+  const res = http.get(`${BASE_URL}/projects`);
   check(res, { "projects 200": (r) => r.status === 200 });
 }
 
 export function appUrl() {
-  const res = http.get(`${BASE_URL}/api/projects/14/url`);
+  const res = http.get(`${BASE_URL}/projects/14/url`);
   check(res, { "url 200": (r) => r.status === 200 });
 }
 

@@ -90,14 +90,14 @@ Evaluate Forge API performance under concurrent read traffic.
 - Database-backed endpoints showed significant latency.
 - Further profiling required to isolate the primary bottleneck.
 
-## Next Experiment
+## Next Experiment:
 
 - Backend Replicas: **1 → 3**
 - Re-run identical workload.
 - Compare latency, throughput and failure rate.
 
 
-Hypothesis:
+## Hypothesis:
 Single backend replica is the throughput bottleneck.
 
 Experiment:
@@ -110,3 +110,19 @@ Conclusion:
 Backend concurrency was the primary bottleneck under this workload.
 
 
+Connection Lifecycle Optimization
+
+Problem
+
+High request latency and excessive thread creation were observed under concurrent API load. Runtime profiling revealed repeated PostgreSQL authentication overhead and blocked goroutines waiting on database operations.
+
+Optimization
+
+Implemented database connection pool tuning, bounded connection limits, connection recycling, and context-aware database queries with request timeouts.
+
+Impact
+
+• Thread creation reduced from 1023 to 15
+• Average API latency reduced to ~2 ms
+• Stable throughput at ~895 requests/sec
+• Eliminated excessive SCRAM-related heap allocations

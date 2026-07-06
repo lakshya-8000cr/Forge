@@ -135,6 +135,8 @@ func main() {
 	mux.HandleFunc("/projects/", projectDetailHandler)
 	go func() {  // this is where we have setup the profilling in go 
 		//profilling ?=> can show how much resourcres are alloacted for the code parts , everything from varibale to func , so that we can optimize the algos
+		//problem was-> we thought that we are not creating the connection pool , but in actually we were creating but error was coming bcz , every second new connection pool or connections werea getting creatted , so we limit thata thing 
+		//next thing was thread , 1023 thread were gettig created before 1 thtread == 1 mb , that was taking a lot of space 
     log.Println("pprof server running on :6060")
     log.Println(http.ListenAndServe("localhost:6060", nil))
     }()
