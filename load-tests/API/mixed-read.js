@@ -2,6 +2,7 @@ import http from "k6/http";
 import { check, sleep } from "k6";
 
 const BASE_URL = "http://localhost:8080";
+const PROJECT_ID = 7;
 
 export const options = {
   scenarios: {
@@ -10,8 +11,8 @@ export const options = {
       rate: 500,
       timeUnit: "1s",
       duration: "2m",
-      preAllocatedVUs: 200,
-      maxVUs: 1000,
+      preAllocatedVUs: 20000,
+      maxVUs: 20000,
       exec: "health",
     },
     projects: {
@@ -46,7 +47,7 @@ export function projects() {
 }
 
 export function appUrl() {
-  const res = http.get(`${BASE_URL}/projects/14/url`);
+  const res = http.get(`${BASE_URL}/projects/${PROJECT_ID}/url`);
   check(res, { "url 200": (r) => r.status === 200 });
 }
 

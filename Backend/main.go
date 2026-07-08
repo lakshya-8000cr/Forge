@@ -1,24 +1,60 @@
 package main
 
 import (
+	"context"
+	"database/sql"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
+	"os"
+	"os/exec"
+	"runtime"
 	"strconv"
 	"strings"
-	"os/exec"
-    "fmt"
-    "database/sql"
-	"os"
-	_ "net/http/pprof"
 	"time"
-	"runtime"
-	"context"
+	"sync"
 
-_ "github.com/lib/pq"
+	_ "github.com/lib/pq"
+	_ "net/http/pprof"
 )
 
+//global variable 
+var (
+	inFlightMu          sync.Mutex
+	inFlightDeployments = make(map[int]bool)
+)
+
+func markDeployment(id int) bool {
+	inFlightMu.Lock()
+	defer inFlightMu.Unlock()
+
+	if inFlightDeployments[id] {
+		return false
+	}
+
+	inFlightDeployments[id] = true
+	return true
+}
+
+func clearDeployment(id int) {
+	inFlightMu.Lock()
+	defer inFlightMu.Unlock()
+
+	delete(inFlightDeployments, id)
+}
+
+//$
+
 var db *sql.DB
+
+// 🚀 ASYNC JOB QUEUE CONFIGURATION
+type DeployJob struct {
+	ProjectID int
+	Project   Project
+}
+
+var deployQueue chan DeployJob
 
 type Deployment struct {
 	ID        int    `json:"id"`
@@ -28,6 +64,13 @@ type Deployment struct {
 	CreatedAt string `json:"created_at"`
 }
 
+type Project struct {
+	ID        int    `json:"id"`
+	Name      string `json:"name"`
+	ImageName string `json:"image_name"`
+	Status    string `json:"status"`
+}
+
 func getEnv(key string, fallback string) string {
 	value := os.Getenv(key)
 	if value == "" {
@@ -35,7 +78,6 @@ func getEnv(key string, fallback string) string {
 	}
 	return value
 }
-
 
 func connectDB() {
 	host := getEnv("POSTGRES_HOST", "localhost")
@@ -77,16 +119,13 @@ func connectDB() {
 
 func logDBStats() {
 	stats := db.Stats()
-
 	log.Printf(
-		"[DB Pool] Open=%d InUse=%d Idle=%d WaitCount=%d WaitDuration=%v MaxIdleClosed=%d MaxLifetimeClosed=%d",
+		"[DB Pool Status] Open=%d InUse=%d Idle=%d WaitCount=%d WaitDuration=%v",
 		stats.OpenConnections,
 		stats.InUse,
 		stats.Idle,
 		stats.WaitCount,
 		stats.WaitDuration,
-		stats.MaxIdleClosed,
-		stats.MaxLifetimeClosed,
 	)
 }
 
@@ -98,8 +137,7 @@ func createTables() {
 		image_name TEXT NOT NULL,
 		status TEXT NOT NULL DEFAULT 'pending',
 		created_at TIMESTAMP DEFAULT NOW()
-	);
-	`
+	);`
 
 	_, err := db.Exec(projectsQuery)
 	if err != nil {
@@ -113,8 +151,7 @@ func createTables() {
 		image_name TEXT NOT NULL,
 		status TEXT NOT NULL,
 		created_at TIMESTAMP DEFAULT NOW()
-	);
-	`
+	);`
 
 	_, err = db.Exec(deploymentsQuery)
 	if err != nil {
@@ -125,36 +162,82 @@ func createTables() {
 	log.Println("Deployments table ready")
 }
 
+// 🚀 GO CHANNEL WORKER POOL ENGINE
+func startDeployWorkers(workerCount int, queueSize int) {
+	deployQueue = make(chan DeployJob, queueSize)
+
+	for i := 1; i <= workerCount; i++ {
+		go func(workerID int) {
+			log.Printf("[Worker Pool] Background Worker #%d Warm & Initialized", workerID)
+			for job := range deployQueue {
+				log.Printf("[Worker #%d] Processing deployment for project: %s", workerID, job.Project.Name)
+				processAsyncDeployment(job)
+			}
+		}(i)
+	}
+}
+
+func processAsyncDeployment(job DeployJob) {
+	defer clearDeployment(job.ProjectID)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+
+	err := runHelmDeployCtx(ctx, job.Project)
+	if err != nil {
+		failDeployment(job.ProjectID, job.Project, "helm deploy failed")
+		return
+	}
+
+	_, _ = db.Exec(`UPDATE projects SET status = 'running' WHERE id = $1`, job.ProjectID)
+	_, _ = db.Exec(
+		`INSERT INTO deployments (project_id, image_name, status) VALUES ($1, $2, $3)`,
+		job.Project.ID, job.Project.ImageName, "success",
+	)
+
+	log.Printf("[Worker Pool] Deployment SUCCESS for project: %s", job.Project.Name)
+}
+
+
+func failDeployment(id int, project Project, reason string) {
+	log.Printf("[Worker Pool] Deployment FAILED for %s: %s", project.Name, reason)
+	_, _ = db.Exec(`UPDATE projects SET status = 'failed' WHERE id = $1`, id)
+	_, _ = db.Exec(
+		`INSERT INTO deployments (project_id, image_name, status) VALUES ($1, $2, $3)`,
+		project.ID, project.ImageName, "failed",
+	)
+}
+
 func main() {
 	connectDB()
-    createTables()
-	mux := http.NewServeMux()
+	createTables()
 
+	startDeployWorkers(3, 200)
+	startRuntimeMonitor()
+
+	mux := http.NewServeMux()
 	mux.HandleFunc("/health", healthHandler)
 	mux.HandleFunc("/projects", projectsHandler)
 	mux.HandleFunc("/projects/", projectDetailHandler)
+
 	go func() {  // this is where we have setup the profilling in go 
 		//profilling ?=> can show how much resourcres are alloacted for the code parts , everything from varibale to func , so that we can optimize the algos
-		//problem was-> we thought that we are not creating the connection pool , but in actually we were creating but error was coming bcz , every second new connection pool or connections werea getting creatted , so we limit thata thing 
-		//next thing was thread , 1023 thread were gettig created before 1 thtread == 1 mb , that was taking a lot of space 
-    log.Println("pprof server running on :6060")
-    log.Println(http.ListenAndServe("localhost:6060", nil))
-    }()
+		log.Println("pprof server running on :6060")
+		log.Println(http.ListenAndServe("0.0.0.0:6060", nil))
+	}()
 
 	log.Println("Forge backend running on :8080")
 	srv := &http.Server{
-	Addr:              ":8080",
-	Handler:           mux,
-	ReadTimeout:       5 * time.Second,
-	WriteTimeout:      10 * time.Second,
-	IdleTimeout:       30 * time.Second,
-	ReadHeaderTimeout: 2 * time.Second,
-}
+		Addr:              ":8080",
+		Handler:           cors(mux), 
+		ReadTimeout:       5 * time.Second,
+		WriteTimeout:      10 * time.Second,
+		IdleTimeout:       30 * time.Second,
+		ReadHeaderTimeout: 2 * time.Second,
+	}
 
-log.Fatal(srv.ListenAndServe())
-	
+	log.Fatal(srv.ListenAndServe())
 }
-
 
 func startRuntimeMonitor() {
 	go func() {
@@ -170,7 +253,6 @@ func startRuntimeMonitor() {
 	}()
 }
 
-
 func cors(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
@@ -185,7 +267,6 @@ func cors(next http.Handler) http.Handler {
 		next.ServeHTTP(w, r)
 	})
 }
-
 
 func projectDetailHandler(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimPrefix(r.URL.Path, "/projects/")
@@ -207,43 +288,38 @@ func projectDetailHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if len(parts) == 1 && r.Method == http.MethodGet {
-		getProjectByID(w, id)
+		getProjectByID(w, r, id)
 		return
 	}
 
 	if len(parts) == 2 && parts[1] == "deploy" && r.Method == http.MethodPost {
-		deployProject(w, id)
+		deployProject(w, r, id)
 		return
 	}
 
 	if len(parts) == 2 && parts[1] == "status" && r.Method == http.MethodGet {
-	getProjectStatus(w, id)
-	return
-    }
+		getProjectStatus(w, r, id)
+		return
+	}
 
 	if len(parts) == 2 && parts[1] == "logs" && r.Method == http.MethodGet {
-	getProjectLogs(w, r,id)
-	return
-    }
-	
+		getProjectLogs(w, r, id)
+		return
+	}
 
-    if len(parts) == 2 && parts[1] == "deployments" && r.Method == http.MethodGet {
-	getDeployments(w, id)
-	return
-    }
+	if len(parts) == 2 && parts[1] == "deployments" && r.Method == http.MethodGet {
+		getDeployments(w, r, id)
+		return
+	}
 
-
-if len(parts) == 2 && parts[1] == "url" && r.Method == http.MethodGet {
-	getProjectURL(w,r, id)
-	return
-}
-
+	if len(parts) == 2 && parts[1] == "url" && r.Method == http.MethodGet {
+		getProjectURL(w, r, id)
+		return
+	}
 
 	writeJSON(w, http.StatusNotFound, map[string]string{
 		"error": "route not found",
 	})
-
-
 }
 
 func getProjectURL(w http.ResponseWriter, r *http.Request, id int) {  // updated url
@@ -279,7 +355,7 @@ func getMinikubeServiceURL(serviceName string) (string, error) {
 	ipCmd := exec.Command("minikube", "ip")
 	ipOutput, err := ipCmd.CombinedOutput()
 	if err != nil {
-		return "", fmt.Errorf("%s",string(ipOutput))
+		return "", fmt.Errorf("%s", string(ipOutput))
 	}
 
 	nodePortCmd := exec.Command(
@@ -293,7 +369,7 @@ func getMinikubeServiceURL(serviceName string) (string, error) {
 
 	portOutput, err := nodePortCmd.CombinedOutput()
 	if err != nil {
-		return "", fmt.Errorf("%s",string(portOutput))
+		return "", fmt.Errorf("%s", string(portOutput))
 	}
 
 	ip := strings.TrimSpace(string(ipOutput))
@@ -306,15 +382,16 @@ func getMinikubeServiceURL(serviceName string) (string, error) {
 	return fmt.Sprintf("http://%s:%s", ip, port), nil
 }
 
-func getDeployments(w http.ResponseWriter, id int) {
+func getDeployments(w http.ResponseWriter, r *http.Request, id int) {
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+	defer cancel()
 
-	rows, err := db.Query(
-		`SELECT id, project_id, image_name, status, created_at
-		 FROM deployments
-		 WHERE project_id = $1
-		 ORDER BY created_at DESC`,
-		id,
-	)
+	rows, err := db.QueryContext(ctx, `
+		SELECT id, project_id, image_name, status, created_at
+		FROM deployments
+		WHERE project_id = $1
+		ORDER BY created_at DESC
+	`, id)
 
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{
@@ -322,15 +399,11 @@ func getDeployments(w http.ResponseWriter, id int) {
 		})
 		return
 	}
-
 	defer rows.Close()
 
 	deployments := []Deployment{}
-
 	for rows.Next() {
-
 		var d Deployment
-
 		err := rows.Scan(
 			&d.ID,
 			&d.ProjectID,
@@ -338,64 +411,20 @@ func getDeployments(w http.ResponseWriter, id int) {
 			&d.Status,
 			&d.CreatedAt,
 		)
-
 		if err != nil {
 			continue
 		}
-
 		deployments = append(deployments, d)
 	}
 
 	writeJSON(w, http.StatusOK, deployments)
 }
 
-
-func getProjectStatus(w http.ResponseWriter, id int) {
-
-	var project Project
-
-	err := db.QueryRow(
-		`SELECT id, name, image_name, status
-		 FROM projects
-		 WHERE id = $1`,
-		id,
-	).Scan(
-		&project.ID,
-		&project.Name,
-		&project.ImageName,
-		&project.Status,
-	)
-
-	if err != nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{
-			"error": "project not found",
-		})
-		return
-	}
-
-	status, err := getKubernetesStatus(project.Name)
-
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{
-			"error":   "failed to get kubernetes status",
-			"details": err.Error(),
-		})
-		return
-	}
-
-	writeJSON(w, http.StatusOK, map[string]string{
-		"project": project.Name,
-		"status":  status,
-	})
-}
-
-
-func getProjectLogs(w http.ResponseWriter, r *http.Request, id int) {  // updated get projcts
+func getProjectStatus(w http.ResponseWriter, r *http.Request, id int) {
 	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
 	defer cancel()
 
 	var project Project
-
 	err := db.QueryRowContext(ctx, `
 		SELECT id, name, image_name, status
 		FROM projects
@@ -414,7 +443,45 @@ func getProjectLogs(w http.ResponseWriter, r *http.Request, id int) {  // update
 		return
 	}
 
-	logs, err := getKubernetesLogs(project.Name)
+	status, err := getKubernetesStatusCtx(ctx, project.Name)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{
+			"error":   "failed to get kubernetes status",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{
+		"project": project.Name,
+		"status":  status,
+	})
+}
+
+func getProjectLogs(w http.ResponseWriter, r *http.Request, id int) {  // updated get projcts
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
+	var project Project
+	err := db.QueryRowContext(ctx, `
+		SELECT id, name, image_name, status
+		FROM projects
+		WHERE id = $1
+	`, id).Scan(
+		&project.ID,
+		&project.Name,
+		&project.ImageName,
+		&project.Status,
+	)
+
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{
+			"error": "project not found",
+		})
+		return
+	}
+
+	logs, err := getKubernetesLogsCtx(ctx, project.Name)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{
 			"error":   "failed to get logs",
@@ -429,10 +496,7 @@ func getProjectLogs(w http.ResponseWriter, r *http.Request, id int) {  // update
 	})
 }
 
-func getKubernetesLogs(appName string) (string, error) {  // updated
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
+func getKubernetesLogsCtx(ctx context.Context, appName string) (string, error) {  // updated
 	cmd := exec.CommandContext(
 		ctx,
 		"kubectl",
@@ -456,11 +520,14 @@ func getKubernetesLogs(appName string) (string, error) {  // updated
 	return string(output), nil
 }
 
-func getKubernetesStatus(appName string) (string, error) {
-	cmd := exec.Command(
+func getKubernetesStatusCtx(ctx context.Context, appName string) (string, error) {
+	cmd := exec.CommandContext(
+		ctx,
 		"kubectl",
 		"get",
 		"pods",
+		"-n",
+		"forge-apps",
 		"-l",
 		fmt.Sprintf("app=%s", appName),
 		"-o",
@@ -480,39 +547,51 @@ func getKubernetesStatus(appName string) (string, error) {
 	return status, nil
 }
 
+func getAppChartPath() string {  // this will resolve the p.th issue
+	if path := os.Getenv("FORGE_APP_CHART_PATH"); path != "" {
+		return path
+	}
 
-func runHelmDeploy(project Project) error {
+	candidates := []string{
+		"./charts/app",
+		"../charts/app",
+	}
+
+	for _, path := range candidates {
+		info, err := os.Stat(path)
+		if err == nil && info.IsDir() {
+			return path
+		}
+	}
+
+	return "./charts/app"
+}
+
+func runHelmDeployCtx(ctx context.Context, project Project) error {
 	imageParts := strings.Split(project.ImageName, ":")
-
+	chartPath := getAppChartPath()
 	repository := imageParts[0]
 	tag := "latest"
-
 	if len(imageParts) > 1 {
 		tag = imageParts[1]
 	}
 
-cmd := exec.Command(
-	"helm",
-	"upgrade",
-	"--install",
-	project.Name,
-	"./charts/app",
-	"--namespace",
-	"forge-apps",
-	"--create-namespace",
-	"--set", fmt.Sprintf("appName=%s", project.Name),
-	"--set", fmt.Sprintf("image.repository=%s", repository),
-	"--set", fmt.Sprintf("image.tag=%s", tag),
-	"--set", "service.type=ClusterIP",
-	"--set", "ingress.enabled=true",
-	"--set", "ingress.basePath=/apps",
-)
-	output, err := cmd.CombinedOutput()
+	cmd := exec.CommandContext(ctx,
+		"helm", "upgrade", "--install", project.Name, chartPath, // added the path function
+		"--namespace", "forge-apps", "--create-namespace",
+		"--set", fmt.Sprintf("appName=%s", project.Name),
+		"--set", fmt.Sprintf("image.repository=%s", repository),
+		"--set", fmt.Sprintf("image.tag=%s", tag),
+		"--set", "service.type=ClusterIP",
+		"--set", "ingress.enabled=true",
+		"--set", "ingress.basePath=/apps",
+	)
+	
+	output, err := cmd.CombinedOutput() // 1. Catch the 'err' here!
 	log.Println(string(output))
-
-	return err
+	
+	return err // 2. Return the raw error! If err == nil, it means exit code was 0.
 }
-
 
 func deleteHelmRelease(appName string) error {
 	cmd := exec.Command(
@@ -527,14 +606,14 @@ func deleteHelmRelease(appName string) error {
 	return err
 }
 
+func getProjectByID(w http.ResponseWriter, r *http.Request, id int) {
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+	defer cancel()
 
-func getProjectByID(w http.ResponseWriter, id int) {
 	var project Project
-
-	err := db.QueryRow(
-		`SELECT id, name, image_name, status FROM projects WHERE id = $1`,
-		id,
-	).Scan(&project.ID, &project.Name, &project.ImageName, &project.Status)
+	err := db.QueryRowContext(ctx, `
+		SELECT id, name, image_name, status FROM projects WHERE id = $1
+	`, id).Scan(&project.ID, &project.Name, &project.ImageName, &project.Status)
 
 	if err != nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{
@@ -546,13 +625,14 @@ func getProjectByID(w http.ResponseWriter, id int) {
 	writeJSON(w, http.StatusOK, project)
 }
 
-func deployProject(w http.ResponseWriter, id int) {
-	var project Project
+func deployProject(w http.ResponseWriter, r *http.Request, id int) {
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+	defer cancel()
 
-	err := db.QueryRow(
-		`SELECT id, name, image_name, status FROM projects WHERE id = $1`,
-		id,
-	).Scan(&project.ID, &project.Name, &project.ImageName, &project.Status)
+	var project Project
+	err := db.QueryRowContext(ctx, `
+		SELECT id, name, image_name, status FROM projects WHERE id = $1
+	`, id).Scan(&project.ID, &project.Name, &project.ImageName, &project.Status)
 
 	if err != nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{
@@ -561,105 +641,43 @@ func deployProject(w http.ResponseWriter, id int) {
 		return
 	}
 
-	_, err = db.Exec(`UPDATE projects SET status = 'deploying' WHERE id = $1`, id)
+	// 1. Guard: Check if deployment is already in progress
+	if !markDeployment(id) {
+		writeJSON(w, http.StatusConflict, map[string]string{
+			"error": "deployment already in progress for this project",
+		})
+		return
+	}
+
+	_, err = db.ExecContext(ctx, `UPDATE projects SET status = 'deploying' WHERE id = $1`, id)
 	if err != nil {
+		// 2. Cleanup: Clear tracking flag if state update fails
+		clearDeployment(id)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{
 			"error": err.Error(),
 		})
 		return
 	}
 
-	// err = validateImage(project.ImageName)
-     
-	if err != nil {
-	db.Exec(`UPDATE projects SET status = 'failed' WHERE id = $1`, id)
-
-	db.Exec(
-		`INSERT INTO deployments (project_id, image_name, status)
-		 VALUES ($1, $2, $3)`,
-		project.ID,
-		project.ImageName,
-		"failed",
-	)
-
-	//writeJSON(w, http.StatusBadRequest, map[string]any{
-	//	"error":   "image validation failed",
-	//	"details": err.Error(),
-	//})
-	//return
-    }
-
-	err = ensureForgeNamespace()
-
-   if err != nil {
-
-	writeJSON(
-		w,
-		http.StatusInternalServerError,
-
-		map[string]string{
-
-			"error": "failed to create forge namespace",
-		},
-	)
-
-	return
-   }
-
-	err = runHelmDeploy(project)
-
-	if err != nil {
-		db.Exec(`UPDATE projects SET status = 'failed' WHERE id = $1`, id)
-
-		db.Exec(
-			`INSERT INTO deployments (project_id, image_name, status)
-			 VALUES ($1, $2, $3)`,
-			project.ID,
-			project.ImageName,
-			"failed",
-		)
-
-		writeJSON(w, http.StatusInternalServerError, map[string]any{
-			"error":   "helm deploy failed",
-			"details": err.Error(),
+	select {
+	case deployQueue <- DeployJob{ProjectID: id, Project: project}:
+		// 3. Updated Success Response Message
+		writeJSON(w, http.StatusAccepted, map[string]any{
+			"message": "deployment queued successfully",
+			"status":  "deploying",
 		})
-		return
-	}
-
-	_, err = db.Exec(`UPDATE projects SET status = 'running' WHERE id = $1`, id)
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{
-			"error": err.Error(),
+	default:
+		// 4. Cleanup: Clear tracking flag if channel buffer is full
+		clearDeployment(id)
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{
+			"error": "deployment engine processing capacity saturated, retry later",
 		})
-		return
 	}
-
-	_, err = db.Exec(
-		`INSERT INTO deployments (project_id, image_name, status)
-		 VALUES ($1, $2, $3)`,
-		project.ID,
-		project.ImageName,
-		"success",
-	)
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{
-			"error": err.Error(),
-		})
-		return
-	}
-
-	project.Status = "running"
-
-	writeJSON(w, http.StatusOK, map[string]any{
-		"message": "deployment successful",
-		"project": project,
-	})
 }
 
 
-func ensureForgeNamespace() error {
-
-	cmd := exec.Command(
+func ensureForgeNamespaceCtx(ctx context.Context) error {
+	cmd := exec.CommandContext(ctx,
 		"kubectl",
 		"create",
 		"namespace",
@@ -667,12 +685,11 @@ func ensureForgeNamespace() error {
 	)
 
 	err := cmd.Run()
-
 	if err == nil {
 		return nil
 	}
 
-	cmd = exec.Command(
+	cmd = exec.CommandContext(ctx,
 		"kubectl",
 		"get",
 		"namespace",
@@ -682,33 +699,15 @@ func ensureForgeNamespace() error {
 	return cmd.Run()
 }
 
-
-/*func validateImage(imageName string) error {
-	cmd := exec.Command("docker", "manifest", "inspect", imageName)
-
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("invalid or inaccessible image: %s", strings.TrimSpace(string(output)))
-	}
-
-	return nil
-}*/
-
-
 func writeJSON(w http.ResponseWriter, code int, data any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
 	json.NewEncoder(w).Encode(data)
 }
 
-
 func projectsHandler(w http.ResponseWriter, r *http.Request) {  // updated version
-
 	switch r.Method {
-
 	case http.MethodGet:
-
-		// Create a timeout context for the database query
 		ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
 		defer cancel()
 
@@ -727,27 +726,22 @@ func projectsHandler(w http.ResponseWriter, r *http.Request) {  // updated versi
 		defer rows.Close()
 
 		list := []Project{}
-
 		for rows.Next() {
 			var p Project
-
 			if err := rows.Scan(
 				&p.ID,
 				&p.Name,
 				&p.ImageName,
 				&p.Status,
 			); err != nil {
-
 				writeJSON(w, http.StatusInternalServerError, map[string]string{
 					"error": err.Error(),
 				})
 				return
 			}
-
 			list = append(list, p)
 		}
 
-		// Check if iteration ended because of an error
 		if err := rows.Err(); err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{
 				"error": err.Error(),
@@ -758,11 +752,8 @@ func projectsHandler(w http.ResponseWriter, r *http.Request) {  // updated versi
 		writeJSON(w, http.StatusOK, list)
 
 	case http.MethodPost:
-
 		createProject(w, r)
-
 	default:
-
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{
 			"error": "method not allowed",
 		})
@@ -784,7 +775,6 @@ func createProject(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var project Project
-
 	err = db.QueryRow(
 		`INSERT INTO projects (name, image_name, status)
 		 VALUES ($1, $2, 'pending')
@@ -802,18 +792,6 @@ func createProject(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, http.StatusCreated, project)
 }
-
-type Project struct {
-	ID        int    `json:"id"`
-	Name      string `json:"name"`
-	ImageName string `json:"image_name"`
-	Status    string `json:"status"`
-}
-
-
-var projects = []Project{}
-var nextID = 1
-
 
 func healthHandler(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{
