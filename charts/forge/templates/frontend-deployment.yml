@@ -24,3 +24,12 @@ spec:
 
           ports:
             - containerPort: {{ .Values.frontend.port }}
+
+          # 🏎️ FRONTEND OPTIMIZATION: Ultra-light footprint to avoid hardware exhaustion
+          resources:
+            requests:
+              cpu: "100m"      # 0.1 Cores baseline allocation
+              memory: "128Mi"  # 128 Megabytes startup allocation
+            limits:
+              cpu: "500m"      # Max burst capability up to 0.5 Cores
+              memory: "256Mi"  # Absolute cap for browser operations

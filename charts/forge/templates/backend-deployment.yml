@@ -5,7 +5,7 @@ metadata:
   name: forge-backend
 
 spec:
-  replicas: 3
+  replicas: 1
 
   selector:
     matchLabels:
@@ -17,7 +17,6 @@ spec:
         app: forge-backend
 
     spec:
-
       serviceAccountName: forge-backend-sa
 
       containers:
@@ -43,3 +42,12 @@ spec:
 
             - name: POSTGRES_DB
               value: {{ .Values.postgres.database | quote }}
+
+          # 🏎️ FIXED REALIGNMENT: Fits smoothly inside your t3.small instances
+          resources:
+            requests:
+              cpu: "200m"      # 0.2 Cores baseline allocation
+              memory: "256Mi"  # 256 Megabytes startup requirement
+            limits:
+              cpu: "1"         # Max burst capability up to 1 full Core under load
+              memory: "1Gi"    # Absolute cap for the worker queue

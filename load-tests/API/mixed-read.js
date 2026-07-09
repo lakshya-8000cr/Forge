@@ -24,7 +24,7 @@ export const options = {
       rate: 300,
       timeUnit: "1s",
       duration: "2m",
-      preAllocatedVUs: 10000,
+      preAllocatedVUs: 5000,
       maxVUs: 10000, // FIXED: Bounded properly (Must be >= preAllocatedVUs)
       exec: "projects",
     },

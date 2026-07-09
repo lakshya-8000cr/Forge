@@ -17,6 +17,7 @@ import (
 
 	_ "github.com/lib/pq"
 	_ "net/http/pprof"
+	_ "go.uber.org/automaxprocs/maxprocs"
 )
 
 //global variable 
