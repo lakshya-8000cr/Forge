@@ -4,6 +4,11 @@ on:
   push:
     branches: ["main"]
 
+# 🏎️ PRODUCTION SAFETY: Prevents parallel deployments from stepping on each other's toes
+concurrency:
+  group: cd-production
+  cancel-in-progress: false # Do not cancel active deployment, queue safely!
+
 jobs:
   deploy:
     name: Build Push Deploy
@@ -47,5 +52,5 @@ jobs:
         run: |
           kubectl rollout restart deployment forge-backend
           kubectl rollout restart deployment forge-frontend
-          kubectl rollout status deployment forge-backend
-          kubectl rollout status deployment forge-frontend
+          kubectl rollout status deployment forge-backend --timeout=5m
+          kubectl rollout status deployment forge-frontend --timeout=5m

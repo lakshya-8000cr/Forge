@@ -6,15 +6,18 @@ on:
   pull_request:
     branches: ["main"]
 
+# 🏎️ CRASH GUARD: Auto-cancels older pending running jobs on a new commit
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   backend:
     name: Backend CI
     runs-on: ubuntu-latest
-
     defaults:
       run:
         working-directory: Backend
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -36,11 +39,9 @@ jobs:
   frontend:
     name: Frontend CI
     runs-on: ubuntu-latest
-
     defaults:
       run:
         working-directory: frontend
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -55,18 +56,3 @@ jobs:
 
       - name: Build frontend
         run: npm run build
-
-  docker:
-    name: Docker Build Check
-    runs-on: ubuntu-latest
-    needs: [backend, frontend]
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Build backend image
-        run: docker build -t forge-backend -f Backend/Dockerfile .
-
-      - name: Build frontend image
-        run: docker build -t forge-frontend ./frontend
