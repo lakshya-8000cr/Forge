@@ -309,7 +309,7 @@ const deleteProject = (id: number) => {
           <span className="topbar-clock">{clock || "--:--:-- UTC"}</span>
           {view === "overview" && (
             <button className="btn-outline" onClick={openCreateModal}>
-              + Ca Service
+              +Service
             </button>
           )}
         </div>
