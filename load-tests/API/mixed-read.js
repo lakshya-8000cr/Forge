@@ -4,15 +4,19 @@ import { check, sleep } from "k6";
 const BASE_URL = "http://localhost:8080";
 const PROJECT_ID = 7;
 
+// MERGED OPTIONS: Ek hi block mein sab lock kar diya hai
 export const options = {
+  noConnectionReuse: false, // Keep-Alive hot connections enabled! 🏎️
+  userAgent: "k6-forge-load-test",
+  
   scenarios: {
     health: {
       executor: "constant-arrival-rate",
       rate: 500,
       timeUnit: "1s",
       duration: "2m",
-      preAllocatedVUs: 20000,
-      maxVUs: 20000,
+      preAllocatedVUs: 10000,
+      maxVUs: 10000,
       exec: "health",
     },
     projects: {
@@ -20,8 +24,8 @@ export const options = {
       rate: 300,
       timeUnit: "1s",
       duration: "2m",
-      preAllocatedVUs: 200,
-      maxVUs: 1000,
+      preAllocatedVUs: 10000,
+      maxVUs: 10000, // FIXED: Bounded properly (Must be >= preAllocatedVUs)
       exec: "projects",
     },
     app_url: {
@@ -29,8 +33,8 @@ export const options = {
       rate: 100,
       timeUnit: "1s",
       duration: "2m",
-      preAllocatedVUs: 100,
-      maxVUs: 500,
+      preAllocatedVUs: 1000,
+      maxVUs: 1000, // FIXED: Aligned seamlessly
       exec: "appUrl",
     },
   },
