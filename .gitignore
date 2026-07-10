@@ -32,3 +32,5 @@ override.tf.json
 
 # Environment Variables files
 .env
+
+.forge-key-v2.pem
