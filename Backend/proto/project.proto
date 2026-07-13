@@ -1,0 +1,46 @@
+syntax = "proto3";
+
+package project;
+
+option go_package = "forge/gen/project;projectpb";
+
+service ProjectService {
+  rpc Health(HealthRequest) returns (HealthResponse);
+  rpc GetProject(GetProjectRequest) returns (ProjectResponse);
+  rpc ListProjects(ListProjectsRequest) returns (ListProjectsResponse);
+  rpc CreateProject(CreateProjectRequest) returns (ProjectResponse);
+  rpc GetProjectURL(GetProjectRequest) returns (ProjectURLResponse);
+}
+
+message HealthRequest {}
+
+message HealthResponse {
+  string status = 1;
+  string service = 2;
+}
+
+message GetProjectRequest {
+  int32 id = 1;
+}
+
+message ListProjectsRequest {}
+
+message CreateProjectRequest {
+  string name = 1;
+  string image_name = 2;
+}
+
+message ProjectResponse {
+  int32 id = 1;
+  string name = 2;
+  string image_name = 3;
+  string status = 4;
+}
+
+message ListProjectsResponse {
+  repeated ProjectResponse projects = 1;
+}
+
+message ProjectURLResponse {
+  string url = 1;
+}
